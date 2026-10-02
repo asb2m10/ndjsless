@@ -304,8 +304,8 @@ func TestCopyMessageInPopupCopiesTheIndentedEmbeddedMessage(t *testing.T) {
 	if strings.Contains(got, `"message": "request failed:`) {
 		t.Errorf("copied message duplicates the plain field alongside its embedded section:\n%s", got)
 	}
-	if !strings.HasPrefix(got, "--- embedded in message ---") || !strings.Contains(got, `"status": 502`) {
-		t.Errorf("copied message missing the indented embedded JSON:\n%s", got)
+	if strings.Contains(got, "--- embedded in message ---") || !strings.Contains(got, `"status": 502`) {
+		t.Errorf("copied message missing the indented embedded JSON, or still carries the header the popup now drops:\n%s", got)
 	}
 	if !strings.Contains(m.popupFooter(len(m.wrappedPopup()), m.popupHeight()), "copied message") {
 		t.Errorf("popup footer missing copy confirmation:\n%s", m.popupFooter(len(m.wrappedPopup()), m.popupHeight()))

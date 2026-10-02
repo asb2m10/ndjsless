@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/asb2m10/ndjsless/internal/record"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -47,6 +48,19 @@ func (m Model) wrappedPopup() []string {
 		}
 	}
 	return out
+}
+
+// styleCopyMarker paints the record.CopyMarker line as a red button -- the
+// visual cue that "m" copies the message to the clipboard. Done once at popup
+// build time rather than in wrappedPopup, since wrappedPopup re-slices these
+// lines on every render.
+func styleCopyMarker(lines []string, st styles) []string {
+	for i, l := range lines {
+		if l == record.CopyMarker {
+			lines[i] = st.copyBtn.Render(l)
+		}
+	}
+	return lines
 }
 
 func (m Model) clampPopupTop(v int) int {

@@ -82,7 +82,7 @@ a megabyte-long record pages as fast as a short one.
 |---|---|
 | <kbd>j</kbd> <kbd>k</kbd> <kbd>↓</kbd> <kbd>↑</kbd> | line down / up |
 | <kbd>d</kbd> <kbd>u</kbd> | half page down / up |
-| <kbd>f</kbd> <kbd>b</kbd> <kbd>space</kbd> <kbd>PgDn</kbd> | full page down / up |
+| <kbd>f</kbd> <kbd>b</kbd> <kbd>space</kbd> <kbd>PgDn</kbd> <kbd>Shift+↓</kbd> <kbd>Shift+↑</kbd> | full page down / up |
 | <kbd>g</kbd> <kbd>G</kbd> | first / last record (<kbd>G</kbd> resumes follow) |
 | <kbd>h</kbd> <kbd>l</kbd> <kbd>←</kbd> <kbd>→</kbd> | scroll sideways |
 | <kbd>0</kbd> <kbd>$</kbd> | line start / furthest right |

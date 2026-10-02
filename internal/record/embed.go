@@ -16,6 +16,11 @@ const maxEmbedDepth = 4
 // EmbeddedRule separates a broken line from JSON discovered inside it.
 const EmbeddedRule = "--- embedded ---"
 
+// CopyMarker is the sentinel line Pretty inserts right after the message
+// block. The UI paints it as a red button and "m" copies PrettyMessage to the
+// clipboard whenever this line is showing.
+const CopyMarker = "[COPY]"
+
 // Pretty renders the full record for the detail popup: the message first,
 // since it is the one field worth reading, then every other field as a
 // fixed two-column table, then any JSON found embedded in a string value.
@@ -38,7 +43,7 @@ func Pretty(r Record) string {
 
 	var parts []string
 	if msgBlock != "" {
-		parts = append(parts, msgBlock)
+		parts = append(parts, msgBlock, CopyMarker)
 	}
 	if tbl := prettyFields(r.Fields); tbl != "" {
 		parts = append(parts, tbl)
@@ -62,18 +67,19 @@ func PrettyMessage(r Record) string {
 	return msgBlock
 }
 
-// messageBlock renders the message as Pretty shows it first -- the section
-// for JSON embedded in the message if it has one, otherwise the field itself
-// -- plus the remaining sections for every other field, with the message's
-// own section (now shown up front) pulled out of that remainder so it is not
-// rendered twice.
+// messageBlock renders the message as Pretty shows it first -- the JSON
+// embedded in the message, indented, if it has one, otherwise the field
+// itself -- plus the remaining sections for every other field, with the
+// message's own section (now shown up front, header stripped since its
+// position already says what it is) pulled out of that remainder so it is
+// not rendered twice.
 func messageBlock(fields map[string]any) (block string, rest []string) {
 	secs := sections(fields)
-	prefix := "--- embedded in " + MessageField + " ---"
+	header := "--- embedded in " + MessageField + " ---\n"
 	rest = make([]string, 0, len(secs))
 	for _, s := range secs {
-		if block == "" && strings.HasPrefix(s, prefix) {
-			block = s
+		if block == "" && strings.HasPrefix(s, header) {
+			block = strings.TrimPrefix(s, header)
 			continue
 		}
 		rest = append(rest, s)
@@ -88,18 +94,25 @@ func messageBlock(fields map[string]any) (block string, rest []string) {
 }
 
 // prettyMessage renders the message field on its own, ahead of everything
-// else, since it is the field actually worth reading.
+// else, since it is the field actually worth reading. Shown without the
+// "message" key or quoting -- its position up front already says what it is,
+// and a plain string reads better unquoted. Only a value that is itself JSON
+// (expand unwraps it to a map or slice) gets the indented-structure treatment.
 func prettyMessage(fields map[string]any) (string, bool) {
 	v, ok := fields[MessageField]
 	if !ok {
 		return "", false
 	}
-	b, err := json.MarshalIndent(expand(v, 0), "", "  ")
+	expanded := expand(v, 0)
+	if s, ok := expanded.(string); ok {
+		return s, true
+	}
+	b, err := json.MarshalIndent(expanded, "", "  ")
 	if err != nil {
 		// Should not happen: the value round-tripped through Unmarshal already.
 		return "", false
 	}
-	return `"message": ` + string(b), true
+	return string(b), true
 }
 
 // prettyFields renders every field but the message as a fixed two-column

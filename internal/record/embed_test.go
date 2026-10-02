@@ -104,8 +104,11 @@ func TestPrettyIndentsJSONEmbeddedInAMessage(t *testing.T) {
 	// The common shape: a human-readable prefix followed by a JSON payload.
 	r := Parse(`{"eventTime":"2026-10-01T09:58:04.771Z","message":"request failed: {\"status\":502,\"detail\":{\"code\":\"ETIMEDOUT\",\"attempts\":[1,2,3]}}"}`, ts)
 	out := Pretty(r)
-	if !strings.HasPrefix(out, "--- embedded in message ---") {
-		t.Fatalf("section for the JSON embedded in message must come first:\n%s", out)
+	if !strings.HasPrefix(out, "{\n") {
+		t.Fatalf("JSON embedded in message must come first, header stripped:\n%s", out)
+	}
+	if strings.Contains(out, "--- embedded in message ---") {
+		t.Errorf("message's own embedded section must not repeat the header, since its position already says what it is:\n%s", out)
 	}
 	if !strings.Contains(out, `"status": 502`) || !strings.Contains(out, `"code": "ETIMEDOUT"`) {
 		t.Errorf("embedded JSON not indented:\n%s", out)
@@ -136,16 +139,18 @@ func TestNoSectionWhenTheStringIsEntirelyJSON(t *testing.T) {
 func TestPrettyMessageFirstThenFieldTable(t *testing.T) {
 	r := Parse(`{"message":"hello","level":"info","port":8080}`, ts)
 	out := Pretty(r)
-	msgIdx := strings.Index(out, `"message": "hello"`)
-	if msgIdx != 0 {
-		t.Fatalf("message must come first:\n%s", out)
+	if !strings.HasPrefix(out, "hello") {
+		t.Fatalf("message must come first, unquoted and without its key:\n%s", out)
 	}
-	if strings.Contains(out, "\"message\"") && strings.Count(out, "message") > 1 {
+	if strings.Contains(out, "\"message\"") {
 		t.Errorf("message field leaked into the field table:\n%s", out)
+	}
+	if !strings.Contains(out, CopyMarker) {
+		t.Errorf("missing %s after the message:\n%s", CopyMarker, out)
 	}
 	levelIdx := strings.Index(out, "level")
 	portIdx := strings.Index(out, "port")
-	if levelIdx < msgIdx || portIdx < msgIdx {
+	if levelIdx <= 0 || portIdx <= 0 {
 		t.Errorf("fields must come after the message:\n%s", out)
 	}
 	if !strings.Contains(out, "8080") {

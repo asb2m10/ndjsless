@@ -233,9 +233,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveCursor(page / 2)
 	case "u", "ctrl+u":
 		m.moveCursor(-page / 2)
-	case "f", "ctrl+f", "pgdown", " ":
+	case "f", "ctrl+f", "pgdown", "shift+down", " ":
 		m.moveCursor(page)
-	case "b", "ctrl+b", "pgup":
+	case "b", "ctrl+b", "pgup", "shift+up":
 		m.moveCursor(-page)
 
 	case "g", "home":
@@ -330,9 +330,9 @@ func (m Model) handlePopupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.popupTop = m.clampPopupTop(m.popupTop + 1)
 	case "k", "up":
 		m.popupTop = m.clampPopupTop(m.popupTop - 1)
-	case "d", "ctrl+d", "pgdown", " ":
+	case "d", "ctrl+d", "pgdown", "shift+down", " ":
 		m.popupTop = m.clampPopupTop(m.popupTop + page)
-	case "u", "ctrl+u", "pgup", "b":
+	case "u", "ctrl+u", "pgup", "shift+up", "b":
 		m.popupTop = m.clampPopupTop(m.popupTop - page)
 	case "g", "home":
 		m.popupTop = 0
@@ -511,7 +511,7 @@ func (m *Model) openPopup() {
 		return
 	}
 	m.mode = modePopup
-	m.popup = strings.Split(record.Pretty(m.recs[m.cursor]), "\n")
+	m.popup = styleCopyMarker(strings.Split(record.Pretty(m.recs[m.cursor]), "\n"), m.st)
 	m.popupTop = 0
 }
 
@@ -539,7 +539,7 @@ ndjsless — keys
 
   j / k, down / up      line down / up
   d / u                 half page down / up
-  f / b, space, pgdn    full page down / up
+  f / b, space, pgdn    full page down / up (also shift+down / shift+up)
   g / G, home / end     first / last line (G resumes follow)
   h / l, left / right   scroll left / right
   0 / $                 line start / furthest right
