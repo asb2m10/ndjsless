@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"bytes"
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -34,8 +36,8 @@ func rows(m Model) []string {
 
 func TestViewHasExactlyScreenHeightLines(t *testing.T) {
 	m := newTestModel(t, 80, 10, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.120Z","message":"one"}`,
-		`{"eventTimestamp":"2026-10-01T09:58:02.120Z","message":"two"}`,
+		`{"eventTime":"2026-10-01T09:58:01.120Z","message":"one"}`,
+		`{"eventTime":"2026-10-01T09:58:02.120Z","message":"two"}`,
 	)
 	if got := len(strings.Split(m.View(), "\n")); got != 10 {
 		t.Errorf("view has %d lines, want 10 (the terminal height)", got)
@@ -45,7 +47,7 @@ func TestViewHasExactlyScreenHeightLines(t *testing.T) {
 func TestRowsNeverExceedTerminalWidth(t *testing.T) {
 	long := strings.Repeat("abcdefghij ", 40)
 	m := newTestModel(t, 40, 6, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.120Z","message":"`+long+`"}`)
+		`{"eventTime":"2026-10-01T09:58:01.120Z","message":"`+long+`"}`)
 	for i, line := range strings.Split(m.View(), "\n") {
 		if n := len([]rune(stripANSI(line))); n > 40 {
 			t.Errorf("line %d is %d cells wide, want <= 40: %q", i, n, line)
@@ -56,8 +58,8 @@ func TestRowsNeverExceedTerminalWidth(t *testing.T) {
 func TestNoWordWrapOneRecordPerRow(t *testing.T) {
 	long := strings.Repeat("x", 500)
 	m := newTestModel(t, 40, 6, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.120Z","message":"`+long+`"}`,
-		`{"eventTimestamp":"2026-10-01T09:58:02.120Z","message":"second"}`)
+		`{"eventTime":"2026-10-01T09:58:01.120Z","message":"`+long+`"}`,
+		`{"eventTime":"2026-10-01T09:58:02.120Z","message":"second"}`)
 	r := rows(m)
 	if !strings.Contains(r[1], "second") {
 		t.Errorf("the long record wrapped onto a second row; row 1 = %q", r[1])
@@ -66,8 +68,8 @@ func TestNoWordWrapOneRecordPerRow(t *testing.T) {
 
 func TestEmbeddedNewlinesDoNotBreakTheRow(t *testing.T) {
 	m := newTestModel(t, 60, 6, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.120Z","message":"a\nb\tc"}`,
-		`{"eventTimestamp":"2026-10-01T09:58:02.120Z","message":"second"}`)
+		`{"eventTime":"2026-10-01T09:58:01.120Z","message":"a\nb\tc"}`,
+		`{"eventTime":"2026-10-01T09:58:02.120Z","message":"second"}`)
 	if got := len(strings.Split(m.View(), "\n")); got != 6 {
 		t.Errorf("a newline inside a message added rows: view has %d lines, want 6", got)
 	}
@@ -78,7 +80,7 @@ func TestEmbeddedNewlinesDoNotBreakTheRow(t *testing.T) {
 
 func TestHorizontalScroll(t *testing.T) {
 	m := newTestModel(t, 30, 6, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.120Z","message":"HEAD`+strings.Repeat("-", 60)+`TAIL"}`)
+		`{"eventTime":"2026-10-01T09:58:01.120Z","message":"HEAD`+strings.Repeat("-", 60)+`TAIL"}`)
 	if !strings.Contains(rows(m)[0], "HEAD") {
 		t.Fatal("expected the start of the line at xoff 0")
 	}
@@ -100,7 +102,7 @@ func TestBrokenLineRendersAsMessage(t *testing.T) {
 
 func TestFieldsReplaceDefaults(t *testing.T) {
 	m := newTestModel(t, 80, 6, []string{"level", "service", "message"},
-		`{"eventTimestamp":"2026-10-01T09:58:01.120Z","level":"info","service":"api","message":"up"}`)
+		`{"eventTime":"2026-10-01T09:58:01.120Z","level":"info","service":"api","message":"up"}`)
 	row := rows(m)[0]
 	if strings.Contains(row, "09:58") {
 		t.Errorf("timestamp shown although -fields replaced it: %q", row)
@@ -135,10 +137,10 @@ func TestColumnWidthIsClamped(t *testing.T) {
 
 func TestSearchJumpsAndCounts(t *testing.T) {
 	lines := []string{
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"alpha"}`,
-		`{"eventTimestamp":"2026-10-01T09:58:02.000Z","message":"needle one"}`,
-		`{"eventTimestamp":"2026-10-01T09:58:03.000Z","message":"beta"}`,
-		`{"eventTimestamp":"2026-10-01T09:58:04.000Z","message":"NEEDLE two"}`,
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"alpha"}`,
+		`{"eventTime":"2026-10-01T09:58:02.000Z","message":"needle one"}`,
+		`{"eventTime":"2026-10-01T09:58:03.000Z","message":"beta"}`,
+		`{"eventTime":"2026-10-01T09:58:04.000Z","message":"NEEDLE two"}`,
 	}
 	m := newTestModel(t, 80, 10, defaultCols(), lines...)
 	m.cursor = 0
@@ -166,7 +168,7 @@ func TestSearchJumpsAndCounts(t *testing.T) {
 
 func TestSearchNotFound(t *testing.T) {
 	m := newTestModel(t, 80, 10, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"alpha"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"alpha"}`)
 	m.setSearch("zzz")
 	if !strings.Contains(m.status, "Pattern not found") {
 		t.Errorf("status = %q, want a not-found message", m.status)
@@ -175,9 +177,9 @@ func TestSearchNotFound(t *testing.T) {
 
 func TestSearchMatchesNewRecordsAsTheyArrive(t *testing.T) {
 	m := newTestModel(t, 80, 10, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"needle"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"needle"}`)
 	m.setSearch("needle")
-	m.append([]string{`{"eventTimestamp":"2026-10-01T09:58:02.000Z","message":"needle again"}`})
+	m.append([]string{`{"eventTime":"2026-10-01T09:58:02.000Z","message":"needle again"}`})
 	if len(m.matches) != 2 {
 		t.Errorf("matches = %v, want streaming records to be matched too", m.matches)
 	}
@@ -187,7 +189,7 @@ func TestFollowPinsToBottomAndScrollUpReleases(t *testing.T) {
 	m := newTestModel(t, 80, 5, defaultCols())
 	m.follow = true
 	for i := 0; i < 20; i++ {
-		m.append([]string{`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"line"}`})
+		m.append([]string{`{"eventTime":"2026-10-01T09:58:01.000Z","message":"line"}`})
 	}
 	if m.cursor != 19 {
 		t.Errorf("follow mode left the cursor at %d, want the last record", m.cursor)
@@ -198,7 +200,7 @@ func TestFollowPinsToBottomAndScrollUpReleases(t *testing.T) {
 		t.Error("scrolling up must leave follow mode")
 	}
 	top := m.top
-	m.append([]string{`{"eventTimestamp":"2026-10-01T09:58:02.000Z","message":"more"}`})
+	m.append([]string{`{"eventTime":"2026-10-01T09:58:02.000Z","message":"more"}`})
 	if m.top != top {
 		t.Errorf("view moved from %d to %d while not following", top, m.top)
 	}
@@ -206,15 +208,15 @@ func TestFollowPinsToBottomAndScrollUpReleases(t *testing.T) {
 
 func TestEnterOpensPopupWithIndentedEmbeddedJSON(t *testing.T) {
 	m := newTestModel(t, 100, 24, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"failed","detail":"{\"status\":502}"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"failed","detail":"{\"status\":502}"}`)
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 	if m.mode != modePopup {
 		t.Fatal("enter did not open the popup")
 	}
 	body := strings.Join(m.popup, "\n")
-	if !strings.Contains(body, `"status": 502`) {
-		t.Errorf("popup body did not indent the embedded JSON:\n%s", body)
+	if !strings.Contains(body, `{"status":502}`) {
+		t.Errorf("popup body did not show the embedded field:\n%s", body)
 	}
 	view := stripANSI(m.View())
 	if !strings.Contains(view, "502") {
@@ -230,6 +232,86 @@ func TestEnterOpensPopupWithIndentedEmbeddedJSON(t *testing.T) {
 	}
 }
 
+// decodeOSC52 extracts and base64-decodes the payload of a single OSC52 copy
+// sequence, for asserting on what copyToClipboard actually sent.
+func decodeOSC52(t *testing.T, seq string) string {
+	t.Helper()
+	const prefix = "\x1b]52;c;"
+	start := strings.Index(seq, prefix)
+	if start < 0 {
+		t.Fatalf("no OSC52 sequence in %q", seq)
+	}
+	rest := seq[start+len(prefix):]
+	end := strings.IndexByte(rest, '\a')
+	if end < 0 {
+		t.Fatalf("unterminated OSC52 sequence in %q", seq)
+	}
+	data, err := base64.StdEncoding.DecodeString(rest[:end])
+	if err != nil {
+		t.Fatalf("OSC52 payload is not base64: %v", err)
+	}
+	return string(data)
+}
+
+func TestCopyLineCopiesTheRawLine(t *testing.T) {
+	var buf bytes.Buffer
+	line := `{"eventTime":"2026-10-01T09:58:01.000Z","message":"hello","port":8080}`
+	m := New(Config{Columns: defaultCols(), TsField: record.DefaultTsField, Clipboard: &buf}, make(chan string))
+	m.w, m.h = 80, 10
+	m.append([]string{line})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	m = updated.(Model)
+
+	if got := decodeOSC52(t, buf.String()); got != line {
+		t.Errorf("copied %q, want the raw line %q", got, line)
+	}
+	if !strings.Contains(m.statusLine(), "copied line") {
+		t.Errorf("status bar missing copy confirmation:\n%s", m.statusLine())
+	}
+}
+
+func TestCopyMessageCopiesTheMessageField(t *testing.T) {
+	var buf bytes.Buffer
+	m := New(Config{Columns: defaultCols(), TsField: record.DefaultTsField, Clipboard: &buf}, make(chan string))
+	m.w, m.h = 80, 10
+	m.append([]string{`{"eventTime":"2026-10-01T09:58:01.000Z","message":"hello there"}`})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = updated.(Model)
+
+	if got := decodeOSC52(t, buf.String()); got != "hello there" {
+		t.Errorf("copied %q, want the message field", got)
+	}
+}
+
+func TestCopyMessageInPopupCopiesTheIndentedEmbeddedMessage(t *testing.T) {
+	var buf bytes.Buffer
+	m := New(Config{Columns: defaultCols(), TsField: record.DefaultTsField, Clipboard: &buf}, make(chan string))
+	m.w, m.h = 80, 24
+	m.append([]string{`{"eventTime":"2026-10-01T09:58:01.000Z","message":"request failed: {\"status\":502}"}`})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.mode != modePopup {
+		t.Fatal("enter did not open the popup")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'m'}})
+	m = updated.(Model)
+
+	got := decodeOSC52(t, buf.String())
+	if !strings.Contains(got, `"message": "request failed:`) {
+		t.Errorf("copied message missing the field itself:\n%s", got)
+	}
+	if !strings.Contains(got, "--- embedded in message ---") || !strings.Contains(got, `"status": 502`) {
+		t.Errorf("copied message missing the indented embedded JSON:\n%s", got)
+	}
+	if !strings.Contains(m.popupFooter(len(m.wrappedPopup()), m.popupHeight()), "copied message") {
+		t.Errorf("popup footer missing copy confirmation:\n%s", m.popupFooter(len(m.wrappedPopup()), m.popupHeight()))
+	}
+}
+
 func TestEnterOnEmptyViewDoesNotPanic(t *testing.T) {
 	m := newTestModel(t, 80, 10, defaultCols())
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -241,7 +323,7 @@ func TestEnterOnEmptyViewDoesNotPanic(t *testing.T) {
 
 func TestSearchModeTyping(t *testing.T) {
 	m := newTestModel(t, 80, 10, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"alpha beta"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"alpha beta"}`)
 	var mm tea.Model = m
 	mm, _ = mm.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	for _, r := range "be ta" {
@@ -273,7 +355,7 @@ func TestQuitKey(t *testing.T) {
 
 func TestTinyTerminalDoesNotPanic(t *testing.T) {
 	m := newTestModel(t, 1, 1, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"x"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"x"}`)
 	_ = m.View()
 	m.mode = modeHelp
 	m.popup = helpLines()
@@ -309,7 +391,7 @@ func TestColouredRowsStillRespectTerminalWidth(t *testing.T) {
 	}, ch)
 	m.w, m.h = 40, 8
 	m.append([]string{
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","level":"error","message":"` + strings.Repeat("e", 200) + `"}`,
+		`{"eventTime":"2026-10-01T09:58:01.000Z","level":"error","message":"` + strings.Repeat("e", 200) + `"}`,
 		`a broken line that is also quite long indeed, well over forty columns wide`,
 	})
 	m.setSearch("e")
@@ -324,7 +406,7 @@ func TestMultiRuneKeyMessageIsReplayedPerRune(t *testing.T) {
 	// Holding j, or a fast repeat, delivers all the runes in one KeyMsg.
 	lines := make([]string, 30)
 	for i := range lines {
-		lines[i] = `{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"line"}`
+		lines[i] = `{"eventTime":"2026-10-01T09:58:01.000Z","message":"line"}`
 	}
 	m := newTestModel(t, 80, 10, defaultCols(), lines...)
 	m.cursor, m.top, m.follow = 0, 0, false
@@ -346,7 +428,7 @@ func TestMultiRuneKeyMessageIsReplayedPerRune(t *testing.T) {
 
 func TestMultiRuneBurstStillQuits(t *testing.T) {
 	m := newTestModel(t, 80, 10, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"x"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"x"}`)
 	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("jjq")}); cmd == nil {
 		t.Error("q inside a rune burst did not quit")
 	}
@@ -354,8 +436,8 @@ func TestMultiRuneBurstStillQuits(t *testing.T) {
 
 func TestSlashMidBurstStartsSearchWithTheRest(t *testing.T) {
 	m := newTestModel(t, 80, 10, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"alpha"}`,
-		`{"eventTimestamp":"2026-10-01T09:58:02.000Z","message":"beta"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"alpha"}`,
+		`{"eventTime":"2026-10-01T09:58:02.000Z","message":"beta"}`)
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/bet")})
 	got := updated.(Model)
 	if got.mode != modeSearch {
@@ -368,7 +450,7 @@ func TestSlashMidBurstStartsSearchWithTheRest(t *testing.T) {
 
 func TestHeaderAlignsWithRows(t *testing.T) {
 	m := newTestModel(t, 100, 8, []string{record.DefaultTsField, "level", "service", record.MessageField},
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","level":"info","service":"api","message":"up"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","level":"info","service":"api","message":"up"}`)
 	lines := strings.Split(stripANSI(m.View()), "\n")
 	header, row := lines[0], lines[1]
 	if i, j := strings.Index(header, "LEVEL"), strings.Index(row, "info"); i != j {
@@ -390,7 +472,7 @@ func TestClippingDoesNotChangeWhatIsDisplayed(t *testing.T) {
 		msg += string(rune('a' + i%26))
 	}
 	m := newTestModel(t, 30, 5, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"`+msg+`"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"`+msg+`"}`)
 	full := "05:58:01.000  " + msg // what the row would be, unclipped
 	for _, off := range []int{0, 1, 7, 13, 14, 50, 200, 399, 413} {
 		m.xoff = off
@@ -418,7 +500,7 @@ func clipWindow(s string, off, w int) string {
 func TestHugeRecordStaysResponsive(t *testing.T) {
 	huge := strings.Repeat("z", 1<<20)
 	m := newTestModel(t, 80, 10, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"`+huge+`"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"`+huge+`"}`)
 	if got := len(stripANSI(strings.Split(m.View(), "\n")[0])); got > 80 {
 		t.Errorf("first row is %d cells wide, want <= 80", got)
 	}
@@ -435,8 +517,8 @@ func TestHugeRecordStaysResponsive(t *testing.T) {
 
 func TestStatusHintsWhenThePopupWouldRevealJSON(t *testing.T) {
 	m := newTestModel(t, 100, 8, defaultCols(),
-		`{"eventTimestamp":"2026-10-01T09:58:01.000Z","message":"plain text"}`,
-		`{"eventTimestamp":"2026-10-01T09:58:02.000Z","message":"failed: {\"status\":502}"}`)
+		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"plain text"}`,
+		`{"eventTime":"2026-10-01T09:58:02.000Z","message":"failed: {\"status\":502}"}`)
 	m.cursor = 0
 	if strings.Contains(stripANSI(m.View()), "json") {
 		t.Error("status hints at embedded JSON for a plain record")

@@ -5,22 +5,25 @@ import (
 	"testing"
 )
 
-func TestPrettyIndentsEmbeddedJSON(t *testing.T) {
+func TestPrettyShowsWholeJSONFieldCompactInTheTable(t *testing.T) {
+	// A field that is nothing but JSON is only expanded in place when it is
+	// the message; any other field gets one row in the fixed table instead,
+	// with real characters rather than escaped ones.
 	r := Parse(`{"message":"request failed: ignored","detail":"{\"status\":502,\"upstream\":\"payments\"}"}`, ts)
 	out := Pretty(r)
 	if strings.Contains(out, `\"status\"`) {
-		t.Errorf("embedded JSON left escaped:\n%s", out)
+		t.Errorf("field value left escaped:\n%s", out)
 	}
-	if !strings.Contains(out, `"status": 502`) {
-		t.Errorf("embedded JSON not indented:\n%s", out)
+	if !strings.Contains(out, `{"status":502,"upstream":"payments"}`) {
+		t.Errorf("detail field missing from the table:\n%s", out)
 	}
 	if !HasEmbedded(r) {
 		t.Error("HasEmbedded = false, want true")
 	}
 }
 
-func TestPrettyIndentsTwoLevelsDeep(t *testing.T) {
-	r := Parse(`{"message":"x","payload":"{\"nested\":\"{\\\"deep\\\":[1,2]}\"}"}`, ts)
+func TestPrettyIndentsTwoLevelsDeepInTheMessage(t *testing.T) {
+	r := Parse(`{"message":"{\"nested\":\"{\\\"deep\\\":[1,2]}\"}"}`, ts)
 	out := Pretty(r)
 	if !strings.Contains(out, `"deep"`) {
 		t.Errorf("second level not unwrapped:\n%s", out)
@@ -33,7 +36,7 @@ func TestPrettyIndentsTwoLevelsDeep(t *testing.T) {
 func TestPrettyLeavesPlainStringsAlone(t *testing.T) {
 	r := Parse(`{"message":"not json {at all","count":"123","empty":"null"}`, ts)
 	out := Pretty(r)
-	for _, want := range []string{`"count": "123"`, `"empty": "null"`, `not json {at all`} {
+	for _, want := range []string{"count", "123", "empty", "null", `not json {at all`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Pretty() missing %q:\n%s", want, out)
 		}
@@ -45,7 +48,7 @@ func TestPrettyLeavesPlainStringsAlone(t *testing.T) {
 
 func TestPrettyRejectsTrailingGarbage(t *testing.T) {
 	r := Parse(`{"message":"x","f":"{\"a\":1} oops"}`, ts)
-	if got := Pretty(r); !strings.Contains(got, `"{\"a\":1} oops"`) {
+	if got := Pretty(r); !strings.Contains(got, `{"a":1} oops`) {
 		t.Errorf("string with trailing garbage should stay a string:\n%s", got)
 	}
 }
@@ -99,7 +102,7 @@ func TestPrettyIsStable(t *testing.T) {
 
 func TestPrettyIndentsJSONEmbeddedInAMessage(t *testing.T) {
 	// The common shape: a human-readable prefix followed by a JSON payload.
-	r := Parse(`{"eventTimestamp":"2026-10-01T09:58:04.771Z","message":"request failed: {\"status\":502,\"detail\":{\"code\":\"ETIMEDOUT\",\"attempts\":[1,2,3]}}"}`, ts)
+	r := Parse(`{"eventTime":"2026-10-01T09:58:04.771Z","message":"request failed: {\"status\":502,\"detail\":{\"code\":\"ETIMEDOUT\",\"attempts\":[1,2,3]}}"}`, ts)
 	out := Pretty(r)
 	if !strings.Contains(out, "--- embedded in message ---") {
 		t.Fatalf("no section for the JSON embedded in message:\n%s", out)
@@ -117,14 +120,35 @@ func TestPrettyIndentsJSONEmbeddedInAMessage(t *testing.T) {
 }
 
 func TestNoSectionWhenTheStringIsEntirelyJSON(t *testing.T) {
-	// Expanded in place, so a duplicate section would be noise.
+	// A duplicate section would be noise: the field's own table row already
+	// shows the value, just not indented, since the table is one row per field.
 	r := Parse(`{"message":"x","payload":"{\"a\":1}"}`, ts)
 	out := Pretty(r)
 	if strings.Contains(out, "--- embedded in") {
-		t.Errorf("whole-string JSON should be expanded in place, not sectioned:\n%s", out)
+		t.Errorf("whole-string JSON should not be sectioned:\n%s", out)
 	}
-	if !strings.Contains(out, `"a": 1`) {
-		t.Errorf("whole-string JSON not expanded:\n%s", out)
+	if !strings.Contains(out, `{"a":1}`) {
+		t.Errorf("field value missing from the table:\n%s", out)
+	}
+}
+
+func TestPrettyMessageFirstThenFieldTable(t *testing.T) {
+	r := Parse(`{"message":"hello","level":"info","port":8080}`, ts)
+	out := Pretty(r)
+	msgIdx := strings.Index(out, `"message": "hello"`)
+	if msgIdx != 0 {
+		t.Fatalf("message must come first:\n%s", out)
+	}
+	if strings.Contains(out, "\"message\"") && strings.Count(out, "message") > 1 {
+		t.Errorf("message field leaked into the field table:\n%s", out)
+	}
+	levelIdx := strings.Index(out, "level")
+	portIdx := strings.Index(out, "port")
+	if levelIdx < msgIdx || portIdx < msgIdx {
+		t.Errorf("fields must come after the message:\n%s", out)
+	}
+	if !strings.Contains(out, "8080") {
+		t.Errorf("port missing from the field table:\n%s", out)
 	}
 }
 

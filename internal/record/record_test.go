@@ -8,7 +8,7 @@ import (
 const ts = DefaultTsField
 
 func TestParseValid(t *testing.T) {
-	r := Parse(`{"eventTimestamp":"2026-10-01T09:58:01.120Z","level":"info","message":"hello","port":8080}`, ts)
+	r := Parse(`{"eventTime":"2026-10-01T09:58:01.120Z","level":"info","message":"hello","port":8080}`, ts)
 	if r.Broken {
 		t.Fatal("valid line marked broken")
 	}
@@ -29,7 +29,7 @@ func TestParseValid(t *testing.T) {
 func TestParseBroken(t *testing.T) {
 	for _, line := range []string{
 		"Starting application v1.2.3",
-		`{"eventTimestamp":"2026-10-01T09:58:01Z","message":"truncated`,
+		`{"eventTime":"2026-10-01T09:58:01Z","message":"truncated`,
 		`[1,2,3]`, // valid JSON, but not a record
 		"",
 	} {
@@ -54,20 +54,34 @@ func TestMissingTimestamp(t *testing.T) {
 }
 
 func TestUnparseableTimestampShownRaw(t *testing.T) {
-	r := Parse(`{"eventTimestamp":"not-a-timestamp","message":"x"}`, ts)
+	r := Parse(`{"eventTime":"not-a-timestamp","message":"x"}`, ts)
 	if got := r.Timestamp(); got != "not-a-timestamp" {
 		t.Errorf("Timestamp() = %q, want the raw value", got)
 	}
 }
 
 func TestEpochSecondsVersusMillis(t *testing.T) {
-	sec := Parse(`{"eventTimestamp":1759305488,"message":"x"}`, ts)
-	mil := Parse(`{"eventTimestamp":1759305488000,"message":"x"}`, ts)
+	sec := Parse(`{"eventTime":1759305488,"message":"x"}`, ts)
+	mil := Parse(`{"eventTime":1759305488000,"message":"x"}`, ts)
 	if !sec.Ts.Equal(mil.Ts) {
 		t.Errorf("epoch seconds %v and millis %v should be the same instant", sec.Ts, mil.Ts)
 	}
 	if sec.Ts.Year() != 2025 {
 		t.Errorf("epoch seconds parsed to year %d, want 2025", sec.Ts.Year())
+	}
+}
+
+func TestEpochMillisAsJSString(t *testing.T) {
+	// JS loses precision on integers past 2^53, so a logger that formats its
+	// timestamp in JavaScript sends epoch millis as a string instead of a
+	// number to keep it exact.
+	str := Parse(`{"eventTime":"1759305488000","message":"x"}`, ts)
+	num := Parse(`{"eventTime":1759305488000,"message":"x"}`, ts)
+	if !str.Ts.Equal(num.Ts) {
+		t.Errorf("string millis %v should equal numeric millis %v", str.Ts, num.Ts)
+	}
+	if str.Ts.Year() != 2025 {
+		t.Errorf("parsed to year %d, want 2025", str.Ts.Year())
 	}
 }
 

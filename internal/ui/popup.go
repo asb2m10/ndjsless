@@ -7,14 +7,12 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// popupRatio is the fraction of the screen the detail popup covers.
-const popupRatio = 0.8
-
 // popupBox returns the inner content size of the popup: the border takes two
-// cells each way and Padding(0,1) one more on each side.
+// cells each way and Padding(0,1) one more on each side. The popup fills the
+// whole terminal rather than floating over the list.
 func (m Model) popupBox() (w, h int) {
-	w = max(20, int(float64(m.w)*popupRatio)) - 4
-	h = max(3, int(float64(m.h)*popupRatio)) - 3 // two border rows plus the footer
+	w = max(20, m.w) - 4
+	h = max(3, m.h) - 3 // two border rows plus the footer
 	return w, h
 }
 
@@ -82,11 +80,15 @@ func (m Model) popupFooter(total, h int) string {
 	if m.mode == modeHelp {
 		title = "help"
 	}
-	if total <= h {
-		return fmt.Sprintf("%s · %d lines · q to close", title, total)
+	base := fmt.Sprintf("%s · %d lines · q to close", title, total)
+	if total > h {
+		base = fmt.Sprintf("%s · %d-%d of %d · j/k to scroll · q to close",
+			title, m.popupTop+1, min(m.popupTop+h, total), total)
 	}
-	return fmt.Sprintf("%s · %d-%d of %d · j/k to scroll · q to close",
-		title, m.popupTop+1, min(m.popupTop+h, total), total)
+	if m.status != "" {
+		return m.status + " — " + base
+	}
+	return base
 }
 
 // compose draws box centred over background, replacing the rows it covers rather

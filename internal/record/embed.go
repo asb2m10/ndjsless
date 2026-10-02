@@ -2,6 +2,7 @@ package record
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,13 +16,15 @@ const maxEmbedDepth = 4
 // EmbeddedRule separates a broken line from JSON discovered inside it.
 const EmbeddedRule = "--- embedded ---"
 
-// Pretty renders the full record for the detail popup.
+// Pretty renders the full record for the detail popup: the message first,
+// since it is the one field worth reading, then every other field as a
+// fixed two-column table, then any JSON found embedded in a string value.
 //
 // JSON that was logged as a string gets indented, which is the whole point of
 // the popup. There are two shapes of that, and each gets the rendering that
 // reads best:
 //
-//   - the string is nothing but JSON ("payload":"{...}"): it is expanded in
+//   - the string is nothing but JSON ("message":"{...}"): it is expanded in
 //     place, so it indents as real structure;
 //   - the string merely contains JSON ("message":"request failed: {...}"): the
 //     field keeps its real value, and the fragment is indented in a labelled
@@ -30,16 +33,81 @@ func Pretty(r Record) string {
 	if r.Broken {
 		return prettyBroken(r.Raw)
 	}
-	b, err := json.MarshalIndent(expand(r.Fields, 0), "", "  ")
-	if err != nil {
-		// Should not happen: the value round-tripped through Unmarshal already.
+	var parts []string
+	if msg, ok := prettyMessage(r.Fields); ok {
+		parts = append(parts, msg)
+	}
+	if tbl := prettyFields(r.Fields); tbl != "" {
+		parts = append(parts, tbl)
+	}
+	parts = append(parts, sections(r.Fields)...)
+	return strings.Join(parts, "\n\n")
+}
+
+// PrettyMessage renders just the message block of the popup: the field
+// itself, indented in place when it is nothing but JSON, plus the section for
+// any JSON embedded inside it -- the same content Pretty shows first, without
+// the rest of the record. Used so the UI can let the user copy only the
+// message, indentation and all, rather than the whole popup.
+func PrettyMessage(r Record) string {
+	if r.Broken {
 		return r.Raw
 	}
-	out := string(b)
-	for _, s := range sections(r.Fields) {
-		out += "\n\n" + s
+	var parts []string
+	if msg, ok := prettyMessage(r.Fields); ok {
+		parts = append(parts, msg)
 	}
-	return out
+	for _, s := range sections(r.Fields) {
+		if strings.HasPrefix(s, "--- embedded in "+MessageField+" ---") {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// prettyMessage renders the message field on its own, ahead of everything
+// else, since it is the field actually worth reading.
+func prettyMessage(fields map[string]any) (string, bool) {
+	v, ok := fields[MessageField]
+	if !ok {
+		return "", false
+	}
+	b, err := json.MarshalIndent(expand(v, 0), "", "  ")
+	if err != nil {
+		// Should not happen: the value round-tripped through Unmarshal already.
+		return "", false
+	}
+	return `"message": ` + string(b), true
+}
+
+// prettyFields renders every field but the message as a fixed two-column
+// table, one row per field, keys aligned to the widest one. Values are
+// flattened to a single line with scalar: this table does not expand nested
+// JSON-in-a-string, that is what sections is for.
+func prettyFields(fields map[string]any) string {
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		if k == MessageField {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	if len(keys) == 0 {
+		return ""
+	}
+	sort.Strings(keys)
+
+	width := 0
+	for _, k := range keys {
+		if len(k) > width {
+			width = len(k)
+		}
+	}
+	rows := make([]string, len(keys))
+	for i, k := range keys {
+		rows[i] = fmt.Sprintf("%-*s  %s", width, k, scalar(fields[k]))
+	}
+	return strings.Join(rows, "\n")
 }
 
 // HasEmbedded reports whether the record contains JSON embedded in a string,

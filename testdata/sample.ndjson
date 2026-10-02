@@ -1,15 +1,16 @@
 Starting application v1.2.3 (logger not yet configured)
 2026-10-01 09:58:00 INFO  bootstrapping config from /etc/app/config.yaml
-{"eventTimestamp":"2026-10-01T09:58:01.120Z","level":"info","service":"api","message":"http server listening","port":8080}
-{"eventTimestamp":"2026-10-01T09:58:01.457Z","level":"debug","service":"api","message":"route table built","routes":42}
-{"eventTimestamp":"2026-10-01T09:58:02.004Z","level":"info","service":"worker","message":"queue consumer started","queue":"jobs.default"}
-{"eventTimestamp":1759305483120,"level":"warn","service":"api","message":"upstream slow, retrying","attempt":2,"upstream":"https://payments.internal/v1/charge"}
-{"eventTimestamp":"2026-10-01T09:58:04.771Z","level":"error","service":"api","message":"request failed: {\"status\":502,\"upstream\":\"payments\",\"detail\":{\"code\":\"ETIMEDOUT\",\"afterMs\":30000,\"attempts\":[1,2,3]}}","requestId":"7f3c1a9e-2b44-4d1f-9c0a-6e5b8d2f1a37"}
-{"eventTimestamp":"2026-10-01T09:58:05.002Z","level":"info","service":"api","message":"this is a deliberately very long message intended to overflow the terminal width so that horizontal scrolling with h and l can be exercised properly, and it keeps going for a while longer still, well past eighty columns and indeed past one hundred and twenty columns too","requestId":"aa11bb22"}
+{"eventTime":"2026-10-01T09:58:01.120Z","level":"info","service":"api","message":"http server listening","port":8080}
+{"eventTime":"2026-10-01T09:58:01.457Z","level":"debug","service":"api","message":"route table built","routes":42}
+{"eventTime":"2026-10-01T09:58:02.004Z","level":"info","service":"worker","message":"queue consumer started","queue":"jobs.default"}
+{"eventTime":1759305483120,"level":"warn","service":"api","message":"upstream slow, retrying","attempt":2,"upstream":"https://payments.internal/v1/charge"}
+{"eventTime":"2026-10-01T09:58:04.771Z","level":"error","service":"api","message":"request failed: {\"status\":502,\"upstream\":\"payments\",\"detail\":{\"code\":\"ETIMEDOUT\",\"afterMs\":30000,\"attempts\":[1,2,3]}}","requestId":"7f3c1a9e-2b44-4d1f-9c0a-6e5b8d2f1a37"}
+{"eventTime":"2026-10-01T09:58:05.002Z","level":"info","service":"api","message":"this is a deliberately very long message intended to overflow the terminal width so that horizontal scrolling with h and l can be exercised properly, and it keeps going for a while longer still, well past eighty columns and indeed past one hundred and twenty columns too","requestId":"aa11bb22"}
 oops: a stray stack trace line	at com.example.Thing.run(Thing.java:42)
-{"eventTimestamp":"2026-10-01T09:58:06.513Z","severity":"ERROR","service":"worker","message":"job crashed","payload":"{\"job\":\"reindex\",\"args\":{\"shard\":3,\"force\":true},\"nested\":\"{\\\"deep\\\":[1,2,{\\\"x\\\":\\\"y\\\"}]}\"}"}
-{"eventTimestamp":"2026-10-01T09:58:07.001Z","level":30,"service":"worker","message":"job retried","attempt":3}
+{"eventTime":"2026-10-01T09:58:06.513Z","severity":"ERROR","service":"worker","message":"job crashed","payload":"{\"job\":\"reindex\",\"args\":{\"shard\":3,\"force\":true},\"nested\":\"{\\\"deep\\\":[1,2,{\\\"x\\\":\\\"y\\\"}]}\"}"}
+{"eventTime":"2026-10-01T09:58:07.001Z","level":30,"service":"worker","message":"job retried","attempt":3}
 {"message":"record with no timestamp at all","level":"info","service":"api"}
-{"eventTimestamp":"not-a-timestamp","level":"trace","service":"api","message":"timestamp unparseable, shown raw"}
-{"eventTimestamp":1759305488,"level":"info","service":"api","message":"timestamp as epoch seconds"}
-{"eventTimestamp":"2026-10-01T09:58:09.900Z","level":"fatal","service":"api","message":"shutting down","http":{"status":500,"method":"POST"}}
+{"eventTime":"not-a-timestamp","level":"trace","service":"api","message":"timestamp unparseable, shown raw"}
+{"eventTime":1759305488,"level":"info","service":"api","message":"timestamp as epoch seconds"}
+{"eventTime":"1759305489250","level":"info","service":"api","message":"timestamp as epoch millis string"}
+{"eventTime":"2026-10-01T09:58:09.900Z","level":"fatal","service":"api","message":"shutting down","http":{"status":500,"method":"POST"}}

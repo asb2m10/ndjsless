@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"io"
 	"strings"
 
 	"github.com/asb2m10/ndjsless/internal/record"
@@ -11,11 +12,12 @@ import (
 
 // Config is everything the pager needs from the command line.
 type Config struct {
-	Columns []string // column names in render order; one of them may be TsField
-	TsField string   // which column is the timestamp
-	Title   string   // source name, shown in the status bar
-	Follow  bool     // start pinned to the bottom
-	Color   bool
+	Columns   []string // column names in render order; one of them may be TsField
+	TsField   string   // which column is the timestamp
+	Title     string   // source name, shown in the status bar
+	Follow    bool     // start pinned to the bottom
+	Color     bool
+	Clipboard io.Writer // where OSC52 copy sequences are written; nil disables c/m
 }
 
 type mode int
@@ -272,6 +274,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeHelp
 		m.popup = helpLines()
 		m.popupTop = 0
+
+	case "c":
+		if m.cursor < len(m.recs) {
+			copyToClipboard(m.cfg.Clipboard, m.recs[m.cursor].Raw)
+			m.status = "copied line"
+		}
+	case "m":
+		if m.cursor < len(m.recs) {
+			copyToClipboard(m.cfg.Clipboard, m.recs[m.cursor].Column(record.MessageField))
+			m.status = "copied message"
+		}
 	}
 	return m, nil
 }
@@ -302,11 +315,17 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handlePopupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	page := m.popupHeight()
+	m.status = ""
 	switch msg.String() {
 	case "q", "esc", "enter", "ctrl+c":
 		m.mode = modeList
 		m.popup = nil
 		m.popupTop = 0
+	case "m":
+		if m.mode == modePopup && m.cursor < len(m.recs) {
+			copyToClipboard(m.cfg.Clipboard, record.PrettyMessage(m.recs[m.cursor]))
+			m.status = "copied message"
+		}
 	case "j", "down":
 		m.popupTop = m.clampPopupTop(m.popupTop + 1)
 	case "k", "up":
@@ -527,11 +546,13 @@ ndjsless — keys
   /                     search
   n / N                 next / previous match
   enter                 show the full record, embedded JSON indented
+  c                     copy the current line to the clipboard
+  m                     copy the current message to the clipboard
   F                     toggle follow mode
   ?                     this help
   q                     quit
 
-In the popup: j/k/d/u/g/G scroll, q or esc closes.
+In the popup: j/k/d/u/g/G scroll, m copies the message, q or esc closes.
 `), "\n")
 }
 

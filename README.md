@@ -1,6 +1,6 @@
 # ndjsless
 
-A `less` for ndjson logs.
+A `less` on steroids for ndjson logs.
 
 Application logs are ndjson, but `less` shows you the raw JSON — one enormous
 line per entry — and `jq` pretty-prints without being able to page, follow or
@@ -10,9 +10,12 @@ search. `ndjsless` does what `less` does, over records instead of lines.
 tail -f app.log | ndjsless
 ndjsless app.log
 ndjsless -f app.log
+
+# show live logs from k8s pods
+kubectl logs `kubectl get pods -o name | fzf` | nsjsless
 ```
 
-By default it shows two columns, `eventTimestamp` and `message`, because those
+By default it shows two columns, `eventTime` and `message`, because those
 are the two fields you actually read. Everything else is one keypress away:
 press <kbd>Enter</kbd> and the whole record opens in a popup, pretty-printed.
 
@@ -46,7 +49,7 @@ fragment and indents it:
 
 ```
 {
-  "eventTimestamp": "2026-10-01T09:58:04.771Z",
+  "eventTime": "2026-10-01T09:58:04.771Z",
   "level": "error",
   "message": "request failed: {\"status\":502,\"detail\":{\"code\":\"ETIMEDOUT\"}}"
 }
@@ -85,6 +88,8 @@ a megabyte-long record pages as fast as a short one.
 | <kbd>0</kbd> <kbd>$</kbd> | line start / furthest right |
 | <kbd>/</kbd> <kbd>n</kbd> <kbd>N</kbd> | search, next, previous |
 | <kbd>Enter</kbd> | full record, embedded JSON indented |
+| <kbd>c</kbd> | copy the current line to the clipboard |
+| <kbd>m</kbd> | copy the current message (indented, in the popup) to the clipboard |
 | <kbd>F</kbd> | toggle follow |
 | <kbd>?</kbd> | help |
 | <kbd>q</kbd> | quit (or close the popup) |
@@ -92,25 +97,49 @@ a megabyte-long record pages as fast as a short one.
 Search is a case-insensitive substring match over the rendered columns, so it
 matches what you can see rather than the raw JSON.
 
+Copying uses OSC52, a terminal escape sequence, rather than a system clipboard
+API, so it works the same over SSH and reads the clipboard of whatever
+terminal you're looking at. It needs a terminal that supports OSC52; inside
+tmux that also means `set -g allow-passthrough on`.
+
 ## Flags
 
 | Flag | |
 |---|---|
 | `-fields a,b,c` | show these columns instead of the defaults |
 | `-add a,b` | add these columns to the defaults, message stays last |
-| `-ts-field name` | the timestamp field (default `eventTimestamp`) |
+| `-ts-field name` | the timestamp field (default `eventTime`) |
 | `-f`, `-follow` | keep reading as the file grows |
 | `-no-color` | monochrome; `NO_COLOR` works too |
 
 Field names may be dotted paths: `-add http.status`. Timestamps are parsed from
-RFC 3339, a few common layouts, or epoch seconds/milliseconds, and rendered as
-local `HH:MM:SS.mmm`; anything unparseable is shown as-is.
+RFC 3339, a few common layouts, or epoch seconds/milliseconds (a number or a
+JS-string of digits, for loggers that stringify to avoid precision loss), and
+rendered as local `HH:MM:SS.mmm`; anything unparseable is shown as-is.
 
 ## Install
 
 ```sh
 go install github.com/asb2m10/ndjsless/cmd/ndjsless@latest
 ```
+
+### Build from source
+
+```sh
+git clone https://github.com/asb2m10/ndjsless
+cd ndjsless
+go build ./cmd/ndjsless      # binary at ./ndjsless
+```
+
+or install it onto your `$PATH` (`$GOBIN`, or `$(go env GOPATH)/bin` if unset):
+
+```sh
+go install ./cmd/ndjsless
+```
+
+Requires only the Go toolchain (`go.mod` pins `go 1.24`); no cgo, no other
+system dependencies. Before either, `go vet ./... && gofmt -l .` and
+`go test ./...` are worth running — `gofmt -l .` should print nothing.
 
 ## Notes
 

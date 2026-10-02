@@ -13,7 +13,7 @@ import (
 )
 
 // DefaultTsField is the timestamp field, overridable with --ts-field.
-const DefaultTsField = "eventTimestamp"
+const DefaultTsField = "eventTime"
 
 // MessageField is the field rendered as the log message.
 const MessageField = "message"
@@ -173,6 +173,12 @@ const epochMillisCutoff = 1e11
 func parseTime(v any) (time.Time, string) {
 	switch t := v.(type) {
 	case string:
+		// A large integer carried as a JS string (JS numbers lose precision
+		// past 2^53, so loggers send epoch millis this way) rather than a
+		// formatted timestamp.
+		if n, err := strconv.ParseInt(t, 10, 64); err == nil {
+			return time.UnixMilli(n), t
+		}
 		for _, layout := range timeLayouts {
 			if ts, err := time.Parse(layout, t); err == nil {
 				return ts, t

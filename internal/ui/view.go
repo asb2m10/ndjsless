@@ -46,7 +46,7 @@ func (m Model) headerText() string {
 	for _, c := range m.cols {
 		label := strings.ToUpper(lastSegment(c.name))
 		if c.isTs {
-			label = "TIME" // eventTimestamp does not fit in HH:MM:SS.mmm
+			label = "TIME" // eventTime does not fit in HH:MM:SS.mmm
 		}
 		cells = append(cells, pad(truncate(label, c.width), c.width))
 	}

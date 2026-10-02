@@ -18,7 +18,7 @@ func benchModel(b *testing.B, msgLen, rows int) Model {
 	m.w, m.h = 120, 40
 	lines := make([]string, rows)
 	for i := range lines {
-		lines[i] = `{"eventTimestamp":"2026-10-01T09:58:01.000Z","level":"info","message":"` +
+		lines[i] = `{"eventTime":"2026-10-01T09:58:01.000Z","level":"info","message":"` +
 			strings.Repeat("z", msgLen) + `"}`
 	}
 	m.append(lines)

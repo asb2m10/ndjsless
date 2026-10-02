@@ -62,11 +62,12 @@ func run() error {
 	defer cancel()
 
 	cfg := ui.Config{
-		Columns: cols,
-		TsField: *tsField,
-		Title:   title,
-		Follow:  followSrc,
-		Color:   !*noColor && ui.ColourEnabled(),
+		Columns:   cols,
+		TsField:   *tsField,
+		Title:     title,
+		Follow:    followSrc,
+		Color:     !*noColor && ui.ColourEnabled(),
+		Clipboard: tty,
 	}
 
 	p := tea.NewProgram(
@@ -164,5 +165,6 @@ Keys:
   j/k d/u f/b g/G   scroll            h/l 0/$   scroll sideways
   /  n  N           search            enter     full record
   F                 toggle follow     ?         help          q  quit
+  c                 copy line         m         copy message
 `)
 }
