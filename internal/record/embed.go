@@ -27,42 +27,64 @@ const EmbeddedRule = "--- embedded ---"
 //   - the string is nothing but JSON ("message":"{...}"): it is expanded in
 //     place, so it indents as real structure;
 //   - the string merely contains JSON ("message":"request failed: {...}"): the
-//     field keeps its real value, and the fragment is indented in a labelled
-//     section underneath. This is the common case for messages.
+//     fragment is indented in a labelled section, shown first in place of the
+//     plain field -- the raw field would otherwise repeat the same JSON,
+//     escaped, right below it. This is the common case for messages.
 func Pretty(r Record) string {
 	if r.Broken {
 		return prettyBroken(r.Raw)
 	}
+	msgBlock, rest := messageBlock(r.Fields)
+
 	var parts []string
-	if msg, ok := prettyMessage(r.Fields); ok {
-		parts = append(parts, msg)
+	if msgBlock != "" {
+		parts = append(parts, msgBlock)
 	}
 	if tbl := prettyFields(r.Fields); tbl != "" {
 		parts = append(parts, tbl)
 	}
-	parts = append(parts, sections(r.Fields)...)
+	parts = append(parts, rest...)
 	return strings.Join(parts, "\n\n")
 }
 
-// PrettyMessage renders just the message block of the popup: the field
-// itself, indented in place when it is nothing but JSON, plus the section for
-// any JSON embedded inside it -- the same content Pretty shows first, without
-// the rest of the record. Used so the UI can let the user copy only the
-// message, indentation and all, rather than the whole popup.
+// PrettyMessage renders just the message block of the popup: the JSON
+// embedded in the message when it has one, indented, in place of the plain
+// field it would otherwise duplicate; the field itself, indented in place
+// when it is nothing but JSON; or the field as-is. The same content Pretty
+// shows first, without the rest of the record. Used so the UI can let the
+// user copy only the message, indentation and all, rather than the whole
+// popup.
 func PrettyMessage(r Record) string {
 	if r.Broken {
 		return r.Raw
 	}
-	var parts []string
-	if msg, ok := prettyMessage(r.Fields); ok {
-		parts = append(parts, msg)
-	}
-	for _, s := range sections(r.Fields) {
-		if strings.HasPrefix(s, "--- embedded in "+MessageField+" ---") {
-			parts = append(parts, s)
+	msgBlock, _ := messageBlock(r.Fields)
+	return msgBlock
+}
+
+// messageBlock renders the message as Pretty shows it first -- the section
+// for JSON embedded in the message if it has one, otherwise the field itself
+// -- plus the remaining sections for every other field, with the message's
+// own section (now shown up front) pulled out of that remainder so it is not
+// rendered twice.
+func messageBlock(fields map[string]any) (block string, rest []string) {
+	secs := sections(fields)
+	prefix := "--- embedded in " + MessageField + " ---"
+	rest = make([]string, 0, len(secs))
+	for _, s := range secs {
+		if block == "" && strings.HasPrefix(s, prefix) {
+			block = s
+			continue
 		}
+		rest = append(rest, s)
 	}
-	return strings.Join(parts, "\n\n")
+	if block != "" {
+		return block, rest
+	}
+	if msg, ok := prettyMessage(fields); ok {
+		return msg, rest
+	}
+	return "", rest
 }
 
 // prettyMessage renders the message field on its own, ahead of everything

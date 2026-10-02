@@ -301,10 +301,10 @@ func TestCopyMessageInPopupCopiesTheIndentedEmbeddedMessage(t *testing.T) {
 	m = updated.(Model)
 
 	got := decodeOSC52(t, buf.String())
-	if !strings.Contains(got, `"message": "request failed:`) {
-		t.Errorf("copied message missing the field itself:\n%s", got)
+	if strings.Contains(got, `"message": "request failed:`) {
+		t.Errorf("copied message duplicates the plain field alongside its embedded section:\n%s", got)
 	}
-	if !strings.Contains(got, "--- embedded in message ---") || !strings.Contains(got, `"status": 502`) {
+	if !strings.HasPrefix(got, "--- embedded in message ---") || !strings.Contains(got, `"status": 502`) {
 		t.Errorf("copied message missing the indented embedded JSON:\n%s", got)
 	}
 	if !strings.Contains(m.popupFooter(len(m.wrappedPopup()), m.popupHeight()), "copied message") {

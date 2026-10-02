@@ -104,15 +104,16 @@ func TestPrettyIndentsJSONEmbeddedInAMessage(t *testing.T) {
 	// The common shape: a human-readable prefix followed by a JSON payload.
 	r := Parse(`{"eventTime":"2026-10-01T09:58:04.771Z","message":"request failed: {\"status\":502,\"detail\":{\"code\":\"ETIMEDOUT\",\"attempts\":[1,2,3]}}"}`, ts)
 	out := Pretty(r)
-	if !strings.Contains(out, "--- embedded in message ---") {
-		t.Fatalf("no section for the JSON embedded in message:\n%s", out)
+	if !strings.HasPrefix(out, "--- embedded in message ---") {
+		t.Fatalf("section for the JSON embedded in message must come first:\n%s", out)
 	}
 	if !strings.Contains(out, `"status": 502`) || !strings.Contains(out, `"code": "ETIMEDOUT"`) {
 		t.Errorf("embedded JSON not indented:\n%s", out)
 	}
-	// The field itself must still be shown as it really was.
-	if !strings.Contains(out, `"message": "request failed:`) {
-		t.Errorf("the real field value was dropped:\n%s", out)
+	// The plain field would just repeat the same JSON escaped, so it is
+	// dropped once its embedded section is shown.
+	if strings.Contains(out, `"message": "request failed:`) {
+		t.Errorf("the plain field duplicates the embedded section:\n%s", out)
 	}
 	if !HasEmbedded(r) {
 		t.Error("HasEmbedded = false, want true")
