@@ -164,6 +164,7 @@ Keys:
   j/k d/u f/b g/G   scroll            h/l 0/$   scroll sideways
   /  n  N           search            enter     full record
   F                 toggle follow     ?         help          q  quit
+  !                 filter by field
   c                 copy line         m         copy message
 `)
 }

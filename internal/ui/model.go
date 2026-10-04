@@ -3,7 +3,9 @@
 package ui
 
 import (
+	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/asb2m10/ndjsless/internal/record"
@@ -27,6 +29,8 @@ const (
 	modeSearch
 	modePopup
 	modeHelp
+	modeMenu
+	modeFilterValue // editing the value a field filter will match
 )
 
 // hScrollStep is how far h/l move, in cells.
@@ -47,6 +51,12 @@ type column struct {
 	isTs  bool
 }
 
+// fieldFilter keeps only the records whose field renders as value.
+type fieldFilter struct {
+	field string
+	value string
+}
+
 // Model is the bubbletea model.
 type Model struct {
 	cfg   Config
@@ -54,23 +64,32 @@ type Model struct {
 	cols  []column
 	lines <-chan string
 
-	recs    []record.Record
-	tailW   []int  // display width of each record's last column; see tailWidth
-	hasJSON []bool // whether the popup would reveal indented JSON
+	recs    []record.Record // every record ingested, filtered or not
+	tailW   []int           // display width of each record's last column; see tailWidth
+	hasJSON []bool          // whether the popup would reveal indented JSON
 
-	top    int // index of the first visible record
-	cursor int // selected record
+	// rows are the indices into recs that are shown, in order. Without a filter
+	// it is every record. top, cursor and matches are positions in rows.
+	rows   []int
+	filter *fieldFilter
+	fields map[string]bool // every top-level JSON field seen, for the ! menu
+
+	top    int // position of the first visible row
+	cursor int // position of the selected row
 	xoff   int // horizontal scroll, in cells
 	follow bool
 
 	search  string
-	matches []int // record indices matching search, ascending
+	matches []int // row positions matching search, ascending
 	status  string
 
 	mode     mode
 	input    string // search being typed
 	popup    []string
 	popupTop int
+	menu     []string // JSON fields offered by the ! menu; row 0 is "reset filter"
+	menuCur  int
+	filterOn string // field chosen in the ! menu, while its value is being edited
 
 	w, h   int
 	closed bool
@@ -96,6 +115,7 @@ func New(cfg Config, lines <-chan string) Model {
 		st:     newStyles(cfg.Color),
 		cols:   cols,
 		lines:  lines,
+		fields: map[string]bool{},
 		follow: cfg.Follow,
 		w:      80,
 		h:      24,
@@ -171,8 +191,14 @@ func (m *Model) append(lines []string) {
 		// the record, and the status bar must not pay that on every frame.
 		m.hasJSON = append(m.hasJSON, record.HasEmbedded(r))
 		m.growColumns(r)
-		if m.search != "" && matchesRecord(r, m.cols, m.cfg.TsField, m.search) {
-			m.matches = append(m.matches, len(m.recs)-1)
+		for _, k := range r.Keys() {
+			m.fields[k] = true
+		}
+		if m.inFilter(r) {
+			m.rows = append(m.rows, len(m.recs)-1)
+			if m.search != "" && matchesRecord(r, m.cols, m.cfg.TsField, m.search) {
+				m.matches = append(m.matches, len(m.rows)-1)
+			}
 		}
 	}
 	if m.follow {
@@ -199,6 +225,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeSearch {
 		return m.handleSearchKey(msg)
 	}
+	if m.mode == modeFilterValue {
+		return m.handleFilterValueKey(msg)
+	}
 	// A key held down, or a fast repeat, arrives as one message carrying several
 	// runes. Outside the search field each of those is its own command, so replay
 	// them one at a time instead of looking up "jjj" and finding nothing. A `/`
@@ -217,6 +246,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.mode == modePopup || m.mode == modeHelp {
 		return m.handlePopupKey(msg)
+	}
+	if m.mode == modeMenu {
+		return m.handleMenuKey(msg)
 	}
 
 	m.status = ""
@@ -263,6 +295,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.mode = modeSearch
 		m.input = ""
+	case "!":
+		m.openMenu()
 	case "n":
 		m.jumpMatch(1)
 	case "N":
@@ -276,14 +310,135 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.popupTop = 0
 
 	case "c":
-		if m.cursor < len(m.recs) {
-			copyToClipboard(m.cfg.Clipboard, m.recs[m.cursor].Raw)
+		if r, ok := m.selected(); ok {
+			copyToClipboard(m.cfg.Clipboard, r.Raw)
 			m.status = "copied line"
 		}
 	case "m":
-		if m.cursor < len(m.recs) {
-			copyToClipboard(m.cfg.Clipboard, m.recs[m.cursor].Column(record.MessageField))
+		if r, ok := m.selected(); ok {
+			copyToClipboard(m.cfg.Clipboard, r.Column(record.MessageField))
 			m.status = "copied message"
+		}
+	}
+	return m, nil
+}
+
+// openMenu lists the JSON fields seen so far. Choosing one filters by the value
+// the selected record has for it.
+func (m *Model) openMenu() {
+	m.menu = m.menu[:0]
+	for k := range m.fields {
+		m.menu = append(m.menu, k)
+	}
+	sort.Strings(m.menu)
+	m.menuCur = 0
+	m.popupTop = 0
+	m.mode = modeMenu
+}
+
+func (m Model) handleMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc", "!":
+		m.mode = modeList
+	case "j", "down":
+		m.menuCur = min(m.menuCur+1, len(m.menu))
+	case "k", "up":
+		m.menuCur = max(m.menuCur-1, 0)
+	case "g", "home":
+		m.menuCur = 0
+	case "G", "end":
+		m.menuCur = len(m.menu)
+	case "enter":
+		m.mode = modeList
+		m.choose(m.menuCur)
+	}
+	// popupTop doubles as the menu's scroll offset, so the cursor row stays on screen.
+	if h := m.popupHeight(); m.menuCur < m.popupTop {
+		m.popupTop = m.menuCur
+	} else if m.menuCur >= m.popupTop+h {
+		m.popupTop = m.menuCur - h + 1
+	}
+	return m, nil
+}
+
+// choose applies menu row i: 0 clears the filter, any other row starts editing
+// the value to filter the JSON field named in that row by.
+func (m *Model) choose(i int) {
+	if i == 0 {
+		m.applyFilter(nil)
+		return
+	}
+	field := m.menu[i-1]
+	r, ok := m.selected()
+	if !ok {
+		m.status = "no record selected"
+		return
+	}
+	if !r.Has(field) {
+		m.status = fmt.Sprintf("this record has no %q field", field)
+		return
+	}
+	m.mode = modeFilterValue
+	m.filterOn = field
+	m.input = r.Column(field)
+}
+
+// applyFilter makes f the active filter (nil clears it) and rebuilds the rows.
+// The selected record stays selected: it always passes the filter it was chosen
+// for, so it survives the rebuild.
+func (m *Model) applyFilter(f *fieldFilter) {
+	var anchor int // absolute index of the selected record
+	if len(m.rows) > 0 {
+		anchor = m.rows[m.cursor]
+	}
+	m.filter = f
+	m.rows = make([]int, 0, len(m.recs))
+	for i, r := range m.recs {
+		if m.inFilter(r) {
+			m.rows = append(m.rows, i)
+		}
+	}
+	m.cursor = sort.SearchInts(m.rows, anchor)
+	m.cursor = clamp(m.cursor, 0, max(0, len(m.rows)-1))
+	m.matches = nil
+	if m.search != "" {
+		m.matches = m.matchingRows(m.search)
+	}
+	if m.follow {
+		m.toBottom()
+	}
+	m.scrollIntoView()
+}
+
+// inFilter reports whether r passes the active filter.
+func (m Model) inFilter(r record.Record) bool {
+	if m.filter == nil {
+		return true
+	}
+	return r.Has(m.filter.field) && r.Column(m.filter.field) == m.filter.value
+}
+
+// handleFilterValueKey edits the value a field filter will match. It starts out
+// as the selected record's value, so enter alone keeps that record's value.
+func (m Model) handleFilterValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		m.mode = modeList
+		m.input = ""
+	case "enter":
+		m.mode = modeList
+		m.applyFilter(&fieldFilter{field: m.filterOn, value: m.input})
+		m.input = ""
+	case "backspace":
+		if m.input != "" {
+			r := []rune(m.input)
+			m.input = string(r[:len(r)-1])
+		}
+	default:
+		if msg.Type == tea.KeyRunes {
+			m.input += string(msg.Runes)
+		} else if msg.Type == tea.KeySpace {
+			m.input += " "
 		}
 	}
 	return m, nil
@@ -322,8 +477,8 @@ func (m Model) handlePopupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.popup = nil
 		m.popupTop = 0
 	case "m":
-		if m.mode == modePopup && m.cursor < len(m.recs) {
-			copyToClipboard(m.cfg.Clipboard, record.PrettyMessage(m.recs[m.cursor]))
+		if r, ok := m.selected(); ok && m.mode == modePopup {
+			copyToClipboard(m.cfg.Clipboard, record.PrettyMessage(r))
 			m.status = "copied message"
 		}
 	case "j", "down":
@@ -368,15 +523,15 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // is what makes `tail -f | ndjsless` usable: you scroll back and the view holds
 // still while the log keeps growing.
 func (m *Model) moveCursor(delta int) {
-	if delta == 0 || len(m.recs) == 0 {
+	if delta == 0 || len(m.rows) == 0 {
 		return
 	}
 	if delta < 0 {
 		m.follow = false
 	}
-	m.cursor = clamp(m.cursor+delta, 0, len(m.recs)-1)
+	m.cursor = clamp(m.cursor+delta, 0, len(m.rows)-1)
 	m.scrollIntoView()
-	if m.cursor == len(m.recs)-1 && delta > 0 {
+	if m.cursor == len(m.rows)-1 && delta > 0 {
 		m.follow = true
 	}
 }
@@ -394,21 +549,29 @@ func (m *Model) scrollIntoView() {
 }
 
 func (m *Model) toBottom() {
-	if len(m.recs) == 0 {
+	if len(m.rows) == 0 {
 		return
 	}
-	m.cursor = len(m.recs) - 1
-	m.top = max(0, len(m.recs)-m.viewHeight())
+	m.cursor = len(m.rows) - 1
+	m.top = max(0, len(m.rows)-m.viewHeight())
 }
 
 func (m *Model) clampVertical() {
-	maxTop := max(0, len(m.recs)-m.viewHeight())
+	maxTop := max(0, len(m.rows)-m.viewHeight())
 	m.top = clamp(m.top, 0, maxTop)
-	if len(m.recs) == 0 {
+	if len(m.rows) == 0 {
 		m.cursor = 0
 		return
 	}
-	m.cursor = clamp(m.cursor, 0, len(m.recs)-1)
+	m.cursor = clamp(m.cursor, 0, len(m.rows)-1)
+}
+
+// selected returns the record under the cursor.
+func (m Model) selected() (record.Record, bool) {
+	if len(m.rows) == 0 {
+		return record.Record{}, false
+	}
+	return m.recs[m.rows[m.cursor]], true
 }
 
 // viewHeight is the number of record rows on screen: everything but the status
@@ -433,8 +596,8 @@ func (m Model) showHeader() bool {
 // a megabyte of payload.
 func (m Model) maxXOff() int {
 	widest := 0
-	for i := m.top; i < len(m.recs) && i < m.top+m.viewHeight(); i++ {
-		if n := m.tailW[i]; n > widest {
+	for i := m.top; i < len(m.rows) && i < m.top+m.viewHeight(); i++ {
+		if n := m.tailW[m.rows[i]]; n > widest {
 			widest = n
 		}
 	}
@@ -449,11 +612,7 @@ func (m *Model) setSearch(pattern string) {
 	if pattern == "" {
 		return
 	}
-	for i, r := range m.recs {
-		if matchesRecord(r, m.cols, m.cfg.TsField, pattern) {
-			m.matches = append(m.matches, i)
-		}
-	}
+	m.matches = m.matchingRows(pattern)
 	if len(m.matches) == 0 {
 		m.status = "Pattern not found: " + pattern
 		return
@@ -465,6 +624,17 @@ func (m *Model) setSearch(pattern string) {
 		}
 	}
 	m.gotoRecord(m.matches[0]) // wrapped around
+}
+
+// matchingRows returns the positions of the visible rows that match pattern.
+func (m Model) matchingRows(pattern string) []int {
+	var out []int
+	for pos, idx := range m.rows {
+		if matchesRecord(m.recs[idx], m.cols, m.cfg.TsField, pattern) {
+			out = append(out, pos)
+		}
+	}
+	return out
 }
 
 // jumpMatch steps to the next (dir>0) or previous match, wrapping at the ends.
@@ -498,20 +668,21 @@ func (m *Model) jumpMatch(dir int) {
 	m.status = "Search hit TOP, continuing at bottom"
 }
 
-// gotoRecord centres the view on an index and drops follow mode.
-func (m *Model) gotoRecord(idx int) {
+// gotoRecord centres the view on a row position and drops follow mode.
+func (m *Model) gotoRecord(pos int) {
 	m.follow = false
-	m.cursor = clamp(idx, 0, max(0, len(m.recs)-1))
+	m.cursor = clamp(pos, 0, max(0, len(m.rows)-1))
 	m.scrollIntoView()
 }
 
 // openPopup renders the selected record in full, with embedded JSON indented.
 func (m *Model) openPopup() {
-	if len(m.recs) == 0 {
+	r, ok := m.selected()
+	if !ok {
 		return
 	}
 	m.mode = modePopup
-	m.popup = styleCopyMarker(strings.Split(record.Pretty(m.recs[m.cursor]), "\n"), m.st)
+	m.popup = styleCopyMarker(strings.Split(record.Pretty(r), "\n"), m.st)
 	m.popupTop = 0
 }
 
@@ -545,6 +716,7 @@ ndjsless — keys
   0 / $                 line start / furthest right
   /                     search
   n / N                 next / previous match
+  !                     filter by a JSON field, or reset the filter
   enter                 show the full record, embedded JSON indented
   c                     copy the current line to the clipboard
   m                     copy the current message to the clipboard
@@ -553,6 +725,8 @@ ndjsless — keys
   q                     quit
 
 In the popup: j/k/d/u/g/G scroll, m copies the message, q or esc closes.
+In the ! menu: j/k move, enter chooses, q or esc closes. Choosing a field shows
+only the records whose field has the value shown in the prompt, pre-filled from the selected record.
 `), "\n")
 }
 

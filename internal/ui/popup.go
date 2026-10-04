@@ -73,6 +73,9 @@ func (m Model) clampPopupTop(v int) int {
 func (m Model) overlayPopup(background string) string {
 	w, h := m.popupBox()
 	lines := m.wrappedPopup()
+	if m.mode == modeMenu {
+		lines = m.menuLines()
+	}
 
 	body := make([]string, 0, h+1)
 	for i := 0; i < h; i++ {
@@ -89,12 +92,32 @@ func (m Model) overlayPopup(background string) string {
 	return compose(background, box, m.w, m.h)
 }
 
+// menuLines renders the ! menu, with the cursor row highlighted.
+func (m Model) menuLines() []string {
+	labels := append([]string{"reset filter"}, m.menu...)
+	out := make([]string, len(labels))
+	for i, label := range labels {
+		if i == m.menuCur {
+			out[i] = m.st.cursor.Render("> " + label)
+		} else {
+			out[i] = "  " + label
+		}
+	}
+	return out
+}
+
 func (m Model) popupFooter(total, h int) string {
 	title := "record"
-	if m.mode == modeHelp {
+	switch m.mode {
+	case modeHelp:
 		title = "help"
+	case modeMenu:
+		title = "filter by field"
 	}
 	base := fmt.Sprintf("%s · %d lines · q to close", title, total)
+	if m.mode == modeMenu {
+		base = fmt.Sprintf("%s · j/k · enter to choose · q to close", title)
+	}
 	if total > h {
 		base = fmt.Sprintf("%s · %d-%d of %d · j/k to scroll · q to close",
 			title, m.popupTop+1, min(m.popupTop+h, total), total)

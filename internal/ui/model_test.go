@@ -528,3 +528,168 @@ func TestStatusHintsWhenThePopupWouldRevealJSON(t *testing.T) {
 		t.Error("status does not hint at the embedded JSON")
 	}
 }
+
+// key sends one key press through Update, as bubbletea would.
+func key(t *testing.T, m Model, k string) Model {
+	t.Helper()
+	var msg tea.KeyMsg
+	switch k {
+	case "enter":
+		msg = tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		msg = tea.KeyMsg{Type: tea.KeyEsc}
+	default:
+		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+	}
+	next, _ := m.Update(msg)
+	return next.(Model)
+}
+
+func filterLines() []string {
+	return []string{
+		`{"eventTime":"2026-10-01T09:58:01.000Z","thread":"alpha","message":"one"}`,
+		`{"eventTime":"2026-10-01T09:58:02.000Z","thread":"beta","message":"two"}`,
+		`{"eventTime":"2026-10-01T09:58:03.000Z","thread":"alpha","message":"three"}`,
+		`plain text with no json`,
+		`{"eventTime":"2026-10-01T09:58:04.000Z","message":"four, no thread"}`,
+	}
+}
+
+func TestFilterMenuListsFieldsSeen(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m = key(t, m, "!")
+	if m.mode != modeMenu {
+		t.Fatalf("mode = %v after !, want the menu", m.mode)
+	}
+	if got, want := strings.Join(m.menu, ","), "eventTime,message,thread"; got != want {
+		t.Errorf("menu fields = %q, want %q", got, want)
+	}
+	if !strings.Contains(m.View(), "reset filter") {
+		t.Errorf("menu view lacks the reset row:\n%s", m.View())
+	}
+}
+
+func TestFilterShowsOnlyRecordsWithTheSameValue(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m = key(t, m, "j") // onto the "beta" record
+	m = key(t, m, "j")
+	m = key(t, m, "k") // back onto "beta"
+	m = key(t, m, "!")
+	m = key(t, m, "j") // eventTime
+	m = key(t, m, "j") // message
+	m = key(t, m, "j") // thread
+	m = key(t, m, "enter")
+	if m.mode != modeFilterValue || m.input != "beta" {
+		t.Fatalf("mode = %v, input = %q; want the value prompt pre-filled with beta", m.mode, m.input)
+	}
+	m = key(t, m, "enter")
+
+	if len(m.rows) != 1 {
+		t.Fatalf("rows = %v, want only the beta record", m.rows)
+	}
+	if m.mode != modeList {
+		t.Errorf("mode = %v after choosing, want the list", m.mode)
+	}
+	if r, _ := m.selected(); r.Column("message") != "two" {
+		t.Errorf("selected %q, want the beta record", r.Column("message"))
+	}
+	if !strings.Contains(m.View(), "thread=beta") {
+		t.Errorf("status bar does not show the filter:\n%s", m.View())
+	}
+}
+
+func TestFilterKeepsMatchingRecordsWhenNewOnesArrive(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m = key(t, m, "!")
+	m = key(t, m, "j") // eventTime
+	m = key(t, m, "j") // message
+	m = key(t, m, "j") // thread
+	m = key(t, m, "j") // alpha is the first record, so this is the menu's "thread" row
+	m = key(t, m, "enter")
+	m = key(t, m, "enter") // accept the pre-filled "alpha"
+	if len(m.rows) == 0 {
+		t.Fatal("no rows after filtering")
+	}
+	m.append([]string{
+		`{"eventTime":"2026-10-01T09:58:05.000Z","thread":"alpha","message":"five"}`,
+		`{"eventTime":"2026-10-01T09:58:06.000Z","thread":"gamma","message":"six"}`,
+	})
+	if got := len(m.rows); got != 3 {
+		t.Errorf("rows = %d after streaming, want 3 (two alpha, one new alpha)", got)
+	}
+}
+
+func TestFilterResetRestoresEveryRecord(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m = key(t, m, "!")
+	for i := 0; i < 3; i++ {
+		m = key(t, m, "j")
+	}
+	m = key(t, m, "enter")
+	m = key(t, m, "enter")
+	if len(m.rows) == len(m.recs) {
+		t.Fatal("filter did not narrow the view")
+	}
+	m = key(t, m, "!")
+	m = key(t, m, "enter") // row 0 is "reset filter"
+	if len(m.rows) != len(m.recs) {
+		t.Errorf("rows = %d after reset, want all %d records", len(m.rows), len(m.recs))
+	}
+	if m.filter != nil {
+		t.Errorf("filter = %+v after reset, want none", m.filter)
+	}
+}
+
+func TestFilterOnFieldMissingFromSelectedRecordDoesNothing(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m.cursor = 3 // the plain text line has no thread
+	m = key(t, m, "!")
+	for i := 0; i < 3; i++ {
+		m = key(t, m, "j")
+	}
+	m = key(t, m, "enter")
+	if m.filter != nil {
+		t.Errorf("filter = %+v, want none when the record lacks the field", m.filter)
+	}
+	if !strings.Contains(m.status, `no "thread" field`) {
+		t.Errorf("status = %q, want a note that the field is missing", m.status)
+	}
+}
+
+func TestFilterMenuEscapeClosesWithoutFiltering(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m = key(t, m, "!")
+	m = key(t, m, "esc")
+	if m.mode != modeList || m.filter != nil {
+		t.Errorf("mode = %v, filter = %+v after esc, want list mode and no filter", m.mode, m.filter)
+	}
+}
+
+func TestFilterValueCanBeEdited(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m = key(t, m, "j") // beta
+	m = key(t, m, "!")
+	for i := 0; i < 3; i++ {
+		m = key(t, m, "j")
+	}
+	m = key(t, m, "enter")
+	m = key(t, m, "backspace") // "beta" -> "bet"
+	m = key(t, m, "a")         // "beta" again, typed by hand
+	m = key(t, m, "enter")
+	if len(m.rows) != 1 || m.filter.value != "beta" {
+		t.Errorf("filter = %+v, rows = %v; want the edited value beta", m.filter, m.rows)
+	}
+}
+
+func TestFilterValueEscapeCancels(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m = key(t, m, "!")
+	for i := 0; i < 3; i++ {
+		m = key(t, m, "j")
+	}
+	m = key(t, m, "enter")
+	m = key(t, m, "esc")
+	if m.mode != modeList || m.filter != nil {
+		t.Errorf("mode = %v, filter = %+v after esc, want list mode and no filter", m.mode, m.filter)
+	}
+}

@@ -95,6 +95,22 @@ func (r Record) Column(name string) string {
 	return scalar(v)
 }
 
+// Has reports whether the field is present, even if its value is null. The name
+// may be a dotted path, as for Column.
+func (r Record) Has(name string) bool {
+	_, ok := lookup(r.Fields, name)
+	return ok
+}
+
+// Keys lists the top-level field names of the record, in no particular order.
+func (r Record) Keys() []string {
+	keys := make([]string, 0, len(r.Fields))
+	for k := range r.Fields {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // Timestamp renders the timestamp column: local HH:MM:SS.mmm when the value
 // parsed, otherwise whatever raw text was there.
 func (r Record) Timestamp() string {

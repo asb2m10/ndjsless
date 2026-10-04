@@ -90,6 +90,7 @@ a megabyte-long record pages as fast as a short one.
 | <kbd>Enter</kbd> | full record, embedded JSON indented |
 | <kbd>c</kbd> | copy the current line to the clipboard |
 | <kbd>m</kbd> | copy the current message (indented, in the popup) to the clipboard |
+| <kbd>!</kbd> | filter by a JSON field: pick one from the menu, then confirm the value, pre-filled from the selected record, to show only records that match it; the first menu row resets the filter |
 | <kbd>F</kbd> | toggle follow |
 | <kbd>?</kbd> | help |
 | <kbd>q</kbd> | quit (or close the popup) |

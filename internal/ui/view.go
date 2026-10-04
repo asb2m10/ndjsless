@@ -22,18 +22,18 @@ func (m Model) View() string {
 
 	h := m.viewHeight()
 	for i := 0; i < h; i++ {
-		idx := m.top + i
-		if idx >= len(m.recs) {
+		pos := m.top + i
+		if pos >= len(m.rows) {
 			b.WriteByte('\n')
 			continue
 		}
-		b.WriteString(m.renderRow(idx))
+		b.WriteString(m.renderRow(pos))
 		b.WriteByte('\n')
 	}
 	b.WriteString(m.statusLine())
 
 	out := b.String()
-	if m.mode == modePopup || m.mode == modeHelp {
+	if m.mode == modePopup || m.mode == modeHelp || m.mode == modeMenu {
 		return m.overlayPopup(out)
 	}
 	return out
@@ -53,18 +53,18 @@ func (m Model) headerText() string {
 	return strings.Join(cells, colGap)
 }
 
-// renderRow lays out one record, slices it to the horizontal window, then styles
-// it. Styling comes last on purpose: escape sequences would otherwise corrupt
-// the cell arithmetic of the slice.
-func (m Model) renderRow(idx int) string {
-	r := m.recs[idx]
+// renderRow lays out the record at row position pos, slices it to the horizontal
+// window, then styles it. Styling comes last on purpose: escape sequences would
+// otherwise corrupt the cell arithmetic of the slice.
+func (m Model) renderRow(pos int) string {
+	r := m.recs[m.rows[pos]]
 	visible := m.slice(m.rowText(r))
 
 	base := m.st.forLevel(r.Level)
 	if r.Broken {
 		base = m.st.broken
 	}
-	if idx == m.cursor {
+	if pos == m.cursor {
 		base = base.Inherit(m.st.cursor)
 		// Fill the rest of the line so the selection reads as a full-width bar.
 		visible = pad(visible, m.w)
@@ -172,8 +172,15 @@ func (m Model) statusLine() string {
 	if m.mode == modeSearch {
 		return m.st.status.Render(pad("/"+m.input, m.w))
 	}
+	if m.mode == modeFilterValue {
+		return m.st.status.Render(pad("filter "+m.filterOn+"="+m.input, m.w))
+	}
 
 	parts := []string{left, fmt.Sprintf("%d lines", len(m.recs))}
+	if m.filter != nil {
+		parts = []string{left, fmt.Sprintf("%d of %d lines", len(m.rows), len(m.recs)),
+			fmt.Sprintf("%s=%s", m.filter.field, truncate(m.filter.value, 40))}
+	}
 	if m.follow {
 		parts = append(parts, "FOLLOW")
 	} else if m.closed {
@@ -192,7 +199,7 @@ func (m Model) statusLine() string {
 	if m.xoff > 0 {
 		parts = append(parts, fmt.Sprintf("+%d", m.xoff))
 	}
-	if m.cursor < len(m.hasJSON) && m.hasJSON[m.cursor] {
+	if m.cursor < len(m.rows) && m.hasJSON[m.rows[m.cursor]] {
 		parts = append(parts, "⏎ json")
 	}
 	bar := strings.Join(parts, " · ")
