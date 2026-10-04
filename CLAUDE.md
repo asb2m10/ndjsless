@@ -93,6 +93,26 @@ only one level of embedding. Counting embeds separately from record nesting woul
 and bubbletea 1.3.10 (currently v0.10.1). `go get`ting `x/ansi` on its own pulls a newer release that
 fails to compile against the `x/cellbuf` those two pin.
 
+### No mouse-driven scrolling (by design, for now)
+
+`cmd/ndjsless/main.go` deliberately does not pass `tea.WithMouseCellMotion()` (or any mouse mode) to
+`tea.NewProgram`. Enabling mouse reporting makes the terminal forward clicks and drags to the app
+instead of letting the terminal's own text selection handle them — on every terminal, enabling mouse
+mode and keeping native mouse text selection are mutually exclusive. `internal/ui/model.go`'s
+`handleMouse` (wheel scroll/pan) is therefore dead code today: no `tea.MouseMsg` is ever produced
+without a mouse mode enabled, but it's left in place rather than deleted in case this gets revisited.
+
+Fix landed in bubbletea v2 (see github.com/charmbracelet/bubbletea issue #162): v2 added
+`tea.MouseClickMsg`/`tea.MouseReleaseMsg` and lets a frame's `View()` return a `MouseMode`, so a
+program can enable `tea.MouseModeCellMotion` normally and switch to `tea.MouseModeNone` for the
+duration of a click-drag, giving back native selection while a button is held and wheel/drag
+reporting the rest of the time. That API does not exist in bubbletea v1.3.10 — v1's `Program` has no
+per-frame mouse-mode switch and no click/release message split, only the single blanket
+`WithMouseCellMotion`/`WithMouseAllMotion` set at startup. Porting the fix means upgrading to
+bubbletea v2, which is a larger step than the dependency pin above and needs its own compatibility
+pass (lipgloss/x/ansi/x/cellbuf versions, API churn elsewhere in `internal/ui`) before it's worth
+doing just for this.
+
 ## Testing a TUI
 
 Most behaviour is covered headlessly: build a `Model`, set `m.w/m.h`, call `m.append(lines)` and

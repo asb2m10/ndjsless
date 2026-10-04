@@ -75,7 +75,6 @@ func run() error {
 		tea.WithInput(tty),
 		tea.WithOutput(tty),
 		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
 	)
 	_, err = p.Run()
 	return err
