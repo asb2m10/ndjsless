@@ -13,6 +13,9 @@ import (
 const colGap = "  "
 
 func (m Model) View() string {
+	if m.mode == modePopup || m.mode == modeHelp || m.mode == modeMenu {
+		return m.popupView()
+	}
 	var b strings.Builder
 
 	if m.showHeader() {
@@ -32,11 +35,7 @@ func (m Model) View() string {
 	}
 	b.WriteString(m.statusLine())
 
-	out := b.String()
-	if m.mode == modePopup || m.mode == modeHelp || m.mode == modeMenu {
-		return m.overlayPopup(out)
-	}
-	return out
+	return b.String()
 }
 
 // headerText labels the columns. Labels are clipped to the column width, or the
@@ -177,7 +176,13 @@ func (m Model) statusLine() string {
 	}
 
 	parts := []string{left, fmt.Sprintf("%d lines", len(m.recs))}
-	if m.filter != nil {
+	switch {
+	case m.filtering && m.filter == nil:
+		parts = []string{left, fmt.Sprintf("clearing filter over %d lines…", len(m.recs))}
+	case m.filtering:
+		parts = []string{left, fmt.Sprintf("filtering %d lines…", len(m.recs)),
+			fmt.Sprintf("%s=%s", m.filter.field, truncate(m.filter.value, 40))}
+	case m.filter != nil:
 		parts = []string{left, fmt.Sprintf("%d of %d lines", len(m.rows), len(m.recs)),
 			fmt.Sprintf("%s=%s", m.filter.field, truncate(m.filter.value, 40))}
 	}

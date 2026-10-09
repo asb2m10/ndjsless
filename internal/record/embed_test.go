@@ -145,9 +145,6 @@ func TestPrettyMessageFirstThenFieldTable(t *testing.T) {
 	if strings.Contains(out, "\"message\"") {
 		t.Errorf("message field leaked into the field table:\n%s", out)
 	}
-	if !strings.Contains(out, CopyMarker) {
-		t.Errorf("missing %s after the message:\n%s", CopyMarker, out)
-	}
 	levelIdx := strings.Index(out, "level")
 	portIdx := strings.Index(out, "port")
 	if levelIdx <= 0 || portIdx <= 0 {

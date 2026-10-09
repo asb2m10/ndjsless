@@ -5,6 +5,7 @@ package ui
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -73,6 +74,13 @@ type Model struct {
 	rows   []int
 	filter *fieldFilter
 	fields map[string]bool // every top-level JSON field seen, for the ! menu
+
+	// While a filter is being applied, rows is empty and the rebuild runs off the
+	// UI goroutine; see applyFilter. filterGen discards the result of a filter
+	// that was replaced before it finished, and anchor is the record to reselect.
+	filtering bool
+	filterGen int
+	anchor    int
 
 	top    int // position of the first visible row
 	cursor int // position of the selected row
@@ -172,6 +180,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.closed = true
 		return m, nil
 
+	case filteredMsg:
+		if msg.gen == m.filterGen {
+			m.finishFilter(msg)
+		}
+		return m, nil
+
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
@@ -194,17 +208,27 @@ func (m *Model) append(lines []string) {
 		for _, k := range r.Keys() {
 			m.fields[k] = true
 		}
-		if m.inFilter(r) {
-			m.rows = append(m.rows, len(m.recs)-1)
-			if m.search != "" && matchesRecord(r, m.cols, m.cfg.TsField, m.search) {
-				m.matches = append(m.matches, len(m.rows)-1)
-			}
+		if !m.filtering {
+			m.admit(len(m.recs) - 1) // otherwise finishFilter catches it up
 		}
 	}
 	if m.follow {
 		m.toBottom()
 	}
 	m.clampVertical()
+}
+
+// admit shows recs[i] if it passes the active filter. Records must be admitted
+// in order, since rows and matches are kept ascending.
+func (m *Model) admit(i int) {
+	r := m.recs[i]
+	if !m.inFilter(r) {
+		return
+	}
+	m.rows = append(m.rows, i)
+	if m.search != "" && matchesRecord(r, m.cols, m.cfg.TsField, m.search) {
+		m.matches = append(m.matches, len(m.rows)-1)
+	}
 }
 
 // growColumns widens columns to fit new values. Widths only ever grow: shrinking
@@ -319,6 +343,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			copyToClipboard(m.cfg.Clipboard, r.Column(record.MessageField))
 			m.status = "copied message"
 		}
+	case "C":
+		if r, ok := m.selected(); ok {
+			copyToClipboard(m.cfg.Clipboard, record.Pretty(r))
+			m.status = "copied record"
+		}
 	}
 	return m, nil
 }
@@ -350,7 +379,7 @@ func (m Model) handleMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.menuCur = len(m.menu)
 	case "enter":
 		m.mode = modeList
-		m.choose(m.menuCur)
+		return m, m.choose(m.menuCur)
 	}
 	// popupTop doubles as the menu's scroll offset, so the cursor row stays on screen.
 	if h := m.popupHeight(); m.menuCur < m.popupTop {
@@ -363,47 +392,86 @@ func (m Model) handleMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // choose applies menu row i: 0 clears the filter, any other row starts editing
 // the value to filter the JSON field named in that row by.
-func (m *Model) choose(i int) {
+func (m *Model) choose(i int) tea.Cmd {
 	if i == 0 {
-		m.applyFilter(nil)
-		return
+		return m.applyFilter(nil)
 	}
 	field := m.menu[i-1]
 	r, ok := m.selected()
 	if !ok {
 		m.status = "no record selected"
-		return
+		return nil
 	}
 	if !r.Has(field) {
 		m.status = fmt.Sprintf("this record has no %q field", field)
-		return
+		return nil
 	}
 	m.mode = modeFilterValue
 	m.filterOn = field
 	m.input = r.Column(field)
+	return nil
 }
 
-// applyFilter makes f the active filter (nil clears it) and rebuilds the rows.
-// The selected record stays selected: it always passes the filter it was chosen
-// for, so it survives the rebuild.
-func (m *Model) applyFilter(f *fieldFilter) {
-	var anchor int // absolute index of the selected record
-	if len(m.rows) > 0 {
-		anchor = m.rows[m.cursor]
+// filteredMsg carries the rows a filter selected out of recs[:n].
+type filteredMsg struct {
+	gen     int
+	n       int
+	rows    []int
+	search  string
+	matches []int
+}
+
+// applyFilter makes f the active filter (nil clears it). Rebuilding the rows
+// means testing every record ingested, which takes long enough on a big log to
+// freeze the UI, so it runs in the returned command. Meanwhile the rows are
+// empty, which blanks the screen and shows that the filter is being applied.
+//
+// The command reads a snapshot of recs: append only ever writes past its end,
+// and a Record is never mutated once parsed.
+func (m *Model) applyFilter(f *fieldFilter) tea.Cmd {
+	if !m.filtering && len(m.rows) > 0 {
+		m.anchor = m.rows[m.cursor]
 	}
 	m.filter = f
-	m.rows = make([]int, 0, len(m.recs))
-	for i, r := range m.recs {
-		if m.inFilter(r) {
-			m.rows = append(m.rows, i)
+	m.filtering = true
+	m.filterGen++
+	m.rows, m.matches = nil, nil
+	m.top, m.cursor = 0, 0
+
+	gen, recs, search := m.filterGen, m.recs, m.search
+	cols, tsField := slices.Clone(m.cols), m.cfg.TsField
+	return func() tea.Msg {
+		out := filteredMsg{gen: gen, n: len(recs), search: search, rows: make([]int, 0, len(recs))}
+		for i, r := range recs {
+			if !passes(f, r) {
+				continue
+			}
+			out.rows = append(out.rows, i)
+			if search != "" && matchesRecord(r, cols, tsField, search) {
+				out.matches = append(out.matches, len(out.rows)-1)
+			}
+		}
+		return out
+	}
+}
+
+// finishFilter installs the rows a filter selected and catches up on records
+// that arrived while it ran. The selected record stays selected: it always
+// passes the filter it was chosen for, so it survives the rebuild.
+func (m *Model) finishFilter(msg filteredMsg) {
+	m.filtering = false
+	m.rows, m.matches = msg.rows, msg.matches
+	if m.search != msg.search { // the search changed while filtering
+		m.matches = nil
+		if m.search != "" {
+			m.matches = m.matchingRows(m.search)
 		}
 	}
-	m.cursor = sort.SearchInts(m.rows, anchor)
-	m.cursor = clamp(m.cursor, 0, max(0, len(m.rows)-1))
-	m.matches = nil
-	if m.search != "" {
-		m.matches = m.matchingRows(m.search)
+	for i := msg.n; i < len(m.recs); i++ {
+		m.admit(i)
 	}
+	m.cursor = sort.SearchInts(m.rows, m.anchor)
+	m.cursor = clamp(m.cursor, 0, max(0, len(m.rows)-1))
 	if m.follow {
 		m.toBottom()
 	}
@@ -412,10 +480,15 @@ func (m *Model) applyFilter(f *fieldFilter) {
 
 // inFilter reports whether r passes the active filter.
 func (m Model) inFilter(r record.Record) bool {
-	if m.filter == nil {
+	return passes(m.filter, r)
+}
+
+// passes reports whether r passes f; a nil filter passes everything.
+func passes(f *fieldFilter, r record.Record) bool {
+	if f == nil {
 		return true
 	}
-	return r.Has(m.filter.field) && r.Column(m.filter.field) == m.filter.value
+	return r.Has(f.field) && r.Column(f.field) == f.value
 }
 
 // handleFilterValueKey edits the value a field filter will match. It starts out
@@ -427,8 +500,9 @@ func (m Model) handleFilterValueKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input = ""
 	case "enter":
 		m.mode = modeList
-		m.applyFilter(&fieldFilter{field: m.filterOn, value: m.input})
+		cmd := m.applyFilter(&fieldFilter{field: m.filterOn, value: m.input})
 		m.input = ""
+		return m, cmd
 	case "backspace":
 		if m.input != "" {
 			r := []rune(m.input)
@@ -480,6 +554,11 @@ func (m Model) handlePopupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if r, ok := m.selected(); ok && m.mode == modePopup {
 			copyToClipboard(m.cfg.Clipboard, record.PrettyMessage(r))
 			m.status = "copied message"
+		}
+	case "C":
+		if r, ok := m.selected(); ok && m.mode == modePopup {
+			copyToClipboard(m.cfg.Clipboard, record.Pretty(r))
+			m.status = "copied record"
 		}
 	case "j", "down":
 		m.popupTop = m.clampPopupTop(m.popupTop + 1)
@@ -609,7 +688,7 @@ func (m Model) maxXOff() int {
 func (m *Model) setSearch(pattern string) {
 	m.search = pattern
 	m.matches = nil
-	if pattern == "" {
+	if pattern == "" || m.filtering { // finishFilter will find the matches
 		return
 	}
 	m.matches = m.matchingRows(pattern)
@@ -682,7 +761,7 @@ func (m *Model) openPopup() {
 		return
 	}
 	m.mode = modePopup
-	m.popup = styleCopyMarker(strings.Split(record.Pretty(r), "\n"), m.st)
+	m.popup = strings.Split(record.Pretty(r), "\n")
 	m.popupTop = 0
 }
 
@@ -720,11 +799,13 @@ ndjsless — keys
   enter                 show the full record, embedded JSON indented
   c                     copy the current line to the clipboard
   m                     copy the current message to the clipboard
+  C                     copy the full record, as the popup shows it
   F                     toggle follow mode
   ?                     this help
   q                     quit
 
-In the popup: j/k/d/u/g/G scroll, m copies the message, q or esc closes.
+In the popup: j/k/d/u/g/G scroll, m copies the message, C the whole popup,
+q or esc closes.
 In the ! menu: j/k move, enter chooses, q or esc closes. Choosing a field shows
 only the records whose field has the value shown in the prompt, pre-filled from the selected record.
 `), "\n")

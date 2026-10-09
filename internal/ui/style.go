@@ -18,8 +18,6 @@ type styles struct {
 	cursor   lipgloss.Style
 	match    lipgloss.Style
 	broken   lipgloss.Style
-	popup    lipgloss.Style
-	copyBtn  lipgloss.Style
 	levels   map[string]lipgloss.Style
 	level    lipgloss.Style
 }
@@ -38,8 +36,7 @@ func newStyles(enabled bool) styles {
 		return styles{
 			header: plain, status: plain.Reverse(true), statusHi: plain.Reverse(true),
 			ts: plain, cursor: plain.Reverse(true), match: plain.Underline(true),
-			broken: plain, level: plain, copyBtn: plain,
-			popup:  lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1),
+			broken: plain, level: plain,
 			levels: map[string]lipgloss.Style{},
 		}
 	}
@@ -53,11 +50,6 @@ func newStyles(enabled bool) styles {
 		match:    lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("221")),
 		broken:   lipgloss.NewStyle().Faint(true).Italic(true),
 		level:    lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
-		copyBtn:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196")),
-		popup: lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
-			Padding(0, 1),
 		levels: map[string]lipgloss.Style{
 			"fatal": lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("201")),
 			"error": lipgloss.NewStyle().Foreground(lipgloss.Color("203")),

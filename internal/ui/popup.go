@@ -4,16 +4,15 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/asb2m10/ndjsless/internal/record"
 	"github.com/charmbracelet/x/ansi"
 )
 
-// popupBox returns the inner content size of the popup: the border takes two
-// cells each way and Padding(0,1) one more on each side. The popup fills the
-// whole terminal rather than floating over the list.
+// popupBox returns the content size of the popup. It is called a popup but it
+// replaces the whole screen, with no border or padding: anything drawn around
+// the text would be picked up by the terminal's own mouse selection.
 func (m Model) popupBox() (w, h int) {
-	w = max(20, m.w) - 4
-	h = max(3, m.h) - 3 // two border rows plus the footer
+	w = max(1, m.w)
+	h = max(1, m.h-1) // the footer takes the last row
 	return w, h
 }
 
@@ -50,27 +49,15 @@ func (m Model) wrappedPopup() []string {
 	return out
 }
 
-// styleCopyMarker paints the record.CopyMarker line as a red button -- the
-// visual cue that "m" copies the message to the clipboard. Done once at popup
-// build time rather than in wrappedPopup, since wrappedPopup re-slices these
-// lines on every render.
-func styleCopyMarker(lines []string, st styles) []string {
-	for i, l := range lines {
-		if l == record.CopyMarker {
-			lines[i] = st.copyBtn.Render(l)
-		}
-	}
-	return lines
-}
-
 func (m Model) clampPopupTop(v int) int {
 	h := m.popupHeight()
 	maxTop := max(0, len(m.wrappedPopup())-h)
 	return clamp(v, 0, maxTop)
 }
 
-// overlayPopup centres the popup on top of the already-rendered list.
-func (m Model) overlayPopup(background string) string {
+// popupView renders the popup full screen in place of the list. Lines are not
+// padded to the width, so selecting text does not drag trailing blanks along.
+func (m Model) popupView() string {
 	w, h := m.popupBox()
 	lines := m.wrappedPopup()
 	if m.mode == modeMenu {
@@ -81,15 +68,13 @@ func (m Model) overlayPopup(background string) string {
 	for i := 0; i < h; i++ {
 		idx := m.popupTop + i
 		if idx < len(lines) {
-			body = append(body, pad(ansi.Truncate(lines[idx], w, "›"), w))
+			body = append(body, ansi.Truncate(lines[idx], w, "›"))
 		} else {
-			body = append(body, strings.Repeat(" ", w))
+			body = append(body, "")
 		}
 	}
-	body = append(body, m.st.ts.Render(pad(m.popupFooter(len(lines), h), w)))
-
-	box := m.st.popup.Render(strings.Join(body, "\n"))
-	return compose(background, box, m.w, m.h)
+	body = append(body, m.st.ts.Render(ansi.Truncate(m.popupFooter(len(lines), h), w, "")))
+	return strings.Join(body, "\n")
 }
 
 // menuLines renders the ! menu, with the cursor row highlighted.
@@ -126,32 +111,4 @@ func (m Model) popupFooter(total, h int) string {
 		return m.status + " — " + base
 	}
 	return base
-}
-
-// compose draws box centred over background, replacing the rows it covers rather
-// than blending, which keeps the popup opaque without a cell buffer.
-func compose(background, box string, w, h int) string {
-	bg := strings.Split(background, "\n")
-	fg := strings.Split(box, "\n")
-
-	boxW := 0
-	for _, l := range fg {
-		if n := ansi.StringWidth(l); n > boxW {
-			boxW = n
-		}
-	}
-	left := max(0, (w-boxW)/2)
-	top := max(0, (h-len(fg))/2)
-
-	for i, l := range fg {
-		row := top + i
-		if row < 0 || row >= len(bg) {
-			continue
-		}
-		before := ansi.Cut(bg[row], 0, left)
-		before = pad(before, left)
-		after := ansi.Cut(bg[row], left+boxW, w)
-		bg[row] = before + l + after
-	}
-	return strings.Join(bg, "\n")
 }

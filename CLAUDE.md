@@ -31,7 +31,7 @@ Four packages, one direction of dependency: `record` ← `ui` → (`source` feed
 - **`internal/source`** — `Lines(ctx, r, follow) <-chan string`. A `bufio.Scanner` with a 4 MiB
   buffer; in follow mode it builds a *fresh* Scanner after EOF, because a Scanner will not resume.
 - **`internal/ui`** — the bubbletea model. `model.go` is state and `Update`, `view.go` is row
-  layout, `popup.go` the overlay, `style.go` the lipgloss styles.
+  layout, `popup.go` the full-screen, borderless popup, `style.go` the lipgloss styles.
 - **`cmd/ndjsless`** — flags, input selection, terminal wiring.
 
 ### Invariants that are easy to break
@@ -67,6 +67,11 @@ bursts rune by rune; in `modeSearch` a burst is appended whole, since that is a 
 **`Model` is a value.** `Update` and the key handlers take it by value and must return the mutated
 copy; pointer-receiver helpers (`append`, `moveCursor`, `setSearch`) mutate that local copy, which is
 why they work.
+
+**Filtering runs off the UI goroutine.** `applyFilter` blanks `rows` and returns a `tea.Cmd` that
+scans a snapshot of `recs`; `finishFilter` installs the result (dropped if `filterGen` moved on) and
+admits records that arrived meanwhile. This is only safe because `recs` is append-only and a parsed
+`Record` is never mutated — keep it that way.
 
 ### Embedded JSON: two shapes, deliberately rendered differently
 

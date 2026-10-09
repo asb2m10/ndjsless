@@ -16,11 +16,6 @@ const maxEmbedDepth = 4
 // EmbeddedRule separates a broken line from JSON discovered inside it.
 const EmbeddedRule = "--- embedded ---"
 
-// CopyMarker is the sentinel line Pretty inserts right after the message
-// block. The UI paints it as a red button and "m" copies PrettyMessage to the
-// clipboard whenever this line is showing.
-const CopyMarker = "[COPY]"
-
 // Pretty renders the full record for the detail popup: the message first,
 // since it is the one field worth reading, then every other field as a
 // fixed two-column table, then any JSON found embedded in a string value.
@@ -43,7 +38,7 @@ func Pretty(r Record) string {
 
 	var parts []string
 	if msgBlock != "" {
-		parts = append(parts, msgBlock, CopyMarker)
+		parts = append(parts, msgBlock)
 	}
 	if tbl := prettyFields(r.Fields); tbl != "" {
 		parts = append(parts, tbl)

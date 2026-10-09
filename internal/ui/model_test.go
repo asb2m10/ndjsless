@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -223,7 +224,18 @@ func TestEnterOpensPopupWithIndentedEmbeddedJSON(t *testing.T) {
 		t.Errorf("popup not drawn over the list:\n%s", view)
 	}
 	if got := len(strings.Split(m.View(), "\n")); got != 24 {
-		t.Errorf("popup overlay changed the view height to %d, want 24", got)
+		t.Errorf("popup changed the view height to %d, want 24", got)
+	}
+	// Full screen with no frame: the first line is the message at column 0, and
+	// nothing from a border or the list behind it can be swept up by a selection.
+	lines := strings.Split(view, "\n")
+	if lines[0] != "failed" {
+		t.Errorf("popup should start with the message at the top-left, got %q", lines[0])
+	}
+	for _, l := range lines {
+		if strings.ContainsAny(l, "│─╭╮╰╯") || strings.HasSuffix(l, " ") {
+			t.Errorf("popup line has a border or trailing padding: %q", l)
+		}
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
@@ -309,6 +321,36 @@ func TestCopyMessageInPopupCopiesTheIndentedEmbeddedMessage(t *testing.T) {
 	}
 	if !strings.Contains(m.popupFooter(len(m.wrappedPopup()), m.popupHeight()), "copied message") {
 		t.Errorf("popup footer missing copy confirmation:\n%s", m.popupFooter(len(m.wrappedPopup()), m.popupHeight()))
+	}
+}
+
+func TestCopyRecordCopiesThePopupText(t *testing.T) {
+	var buf bytes.Buffer
+	m := New(Config{Columns: defaultCols(), TsField: record.DefaultTsField, Clipboard: &buf}, make(chan string))
+	m.w, m.h = 80, 24
+	m.append([]string{`{"eventTime":"2026-10-01T09:58:01.000Z","message":"hello there","port":8080}`})
+
+	for _, keys := range [][]tea.KeyMsg{
+		{{Type: tea.KeyRunes, Runes: []rune{'C'}}},
+		{{Type: tea.KeyEnter}, {Type: tea.KeyRunes, Runes: []rune{'C'}}},
+	} {
+		buf.Reset()
+		mm := m
+		for _, k := range keys {
+			updated, _ := mm.Update(k)
+			mm = updated.(Model)
+		}
+		got := decodeOSC52(t, buf.String())
+		r, _ := mm.selected()
+		if want := record.Pretty(r); got != want {
+			t.Errorf("copied %q, want the popup text %q", got, want)
+		}
+		if strings.Contains(got, "\x1b") {
+			t.Errorf("copied text carries styling:\n%s", got)
+		}
+		if !strings.HasPrefix(got, "hello there") || !strings.Contains(got, "8080") {
+			t.Errorf("copied text should lead with the message and list the fields:\n%s", got)
+		}
 	}
 }
 
@@ -541,7 +583,13 @@ func key(t *testing.T, m Model, k string) Model {
 	default:
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 	}
-	next, _ := m.Update(msg)
+	next, cmd := m.Update(msg)
+	// Run a filter's rebuild to completion, as the bubbletea runtime would.
+	if cmd != nil {
+		if done, ok := cmd().(filteredMsg); ok {
+			next, _ = next.Update(done)
+		}
+	}
 	return next.(Model)
 }
 
@@ -691,5 +739,63 @@ func TestFilterValueEscapeCancels(t *testing.T) {
 	m = key(t, m, "esc")
 	if m.mode != modeList || m.filter != nil {
 		t.Errorf("mode = %v, filter = %+v after esc, want list mode and no filter", m.mode, m.filter)
+	}
+}
+
+// pendingFilter applies a thread filter but returns before its rebuild has run.
+func pendingFilter(t *testing.T, m Model, value string) (Model, tea.Cmd) {
+	t.Helper()
+	cmd := m.applyFilter(&fieldFilter{field: "thread", value: value})
+	if cmd == nil {
+		t.Fatal("applyFilter returned no command")
+	}
+	return m, cmd
+}
+
+func TestFilterBlanksTheScreenWhileItRuns(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m, cmd := pendingFilter(t, m, "alpha")
+	for _, row := range rows(m) {
+		if strings.TrimSpace(row) != "" {
+			t.Fatalf("row %q on screen while filtering, want a blank screen", row)
+		}
+	}
+	if !strings.Contains(m.View(), "filtering 5 lines") {
+		t.Errorf("status bar does not say a filter is running:\n%s", m.View())
+	}
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	if len(m.rows) != 2 || strings.Contains(m.View(), "filtering") {
+		t.Errorf("rows = %v after the rebuild, want the two alpha records:\n%s", m.rows, m.View())
+	}
+}
+
+func TestFilterCatchesUpOnLinesThatArriveWhileItRuns(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m, cmd := pendingFilter(t, m, "alpha")
+	done := cmd() // the rebuild sees only the records ingested before it started
+	m.append([]string{
+		`{"eventTime":"2026-10-01T09:58:05.000Z","thread":"alpha","message":"five"}`,
+		`{"eventTime":"2026-10-01T09:58:06.000Z","thread":"gamma","message":"six"}`,
+	})
+	if len(m.rows) != 0 {
+		t.Fatalf("rows = %v before the rebuild finished, want none", m.rows)
+	}
+	next, _ := m.Update(done)
+	m = next.(Model)
+	if got, want := fmt.Sprint(m.rows), "[0 2 5]"; got != want {
+		t.Errorf("rows = %s, want %s", got, want)
+	}
+}
+
+func TestFilterReplacedBeforeItFinishesIsDiscarded(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m, stale := pendingFilter(t, m, "alpha")
+	m, fresh := pendingFilter(t, m, "beta")
+	next, _ := m.Update(fresh())
+	next, _ = next.Update(stale())
+	m = next.(Model)
+	if len(m.rows) != 1 || m.filter.value != "beta" {
+		t.Errorf("filter = %+v, rows = %v; want only the later beta filter", m.filter, m.rows)
 	}
 }
