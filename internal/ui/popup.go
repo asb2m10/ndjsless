@@ -59,9 +59,13 @@ func (m Model) clampPopupTop(v int) int {
 // padded to the width, so selecting text does not drag trailing blanks along.
 func (m Model) popupView() string {
 	w, h := m.popupBox()
-	lines := m.wrappedPopup()
+	// m.popup still holds the last record opened, which may be huge; the menu
+	// must not pay for wrapping it on every frame.
+	var lines []string
 	if m.mode == modeMenu {
 		lines = m.menuLines()
+	} else {
+		lines = m.wrappedPopup()
 	}
 
 	body := make([]string, 0, h+1)
