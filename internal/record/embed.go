@@ -27,9 +27,10 @@ const EmbeddedRule = "--- embedded ---"
 //   - the string is nothing but JSON ("message":"{...}"): it is expanded in
 //     place, so it indents as real structure;
 //   - the string merely contains JSON ("message":"request failed: {...}"): the
-//     fragment is indented in a labelled section, shown first in place of the
-//     plain field -- the raw field would otherwise repeat the same JSON,
-//     escaped, right below it. This is the common case for messages.
+//     fragment is indented in a labelled section, shown first. The message
+//     still gets a table row for the text around the fragment, with the
+//     fragment itself replaced by "$" since it is already shown above
+//     ("request failed: $"). This is the common case for messages.
 func Pretty(r Record) string {
 	if r.Broken {
 		return prettyBroken(r.Raw)
@@ -110,14 +111,17 @@ func prettyMessage(fields map[string]any) (string, bool) {
 	return string(b), true
 }
 
-// prettyFields renders every field but the message as a fixed two-column
-// table, one row per field, keys aligned to the widest one. Values are
-// flattened to a single line with scalar: this table does not expand nested
-// JSON-in-a-string, that is what sections is for.
+// prettyFields renders every field as a fixed two-column table, one row per
+// field, keys aligned to the widest one. Values are flattened to a single line
+// with scalar: this table does not expand nested JSON-in-a-string, that is
+// what sections is for. The message is left out, since it is shown up front,
+// unless messageRemainder finds text around its embedded JSON that the top
+// block does not show.
 func prettyFields(fields map[string]any) string {
+	msg, hasMsg := messageRemainder(fields)
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
-		if k == MessageField {
+		if k == MessageField && !hasMsg {
 			continue
 		}
 		keys = append(keys, k)
@@ -135,9 +139,37 @@ func prettyFields(fields map[string]any) string {
 	}
 	rows := make([]string, len(keys))
 	for i, k := range keys {
-		rows[i] = fmt.Sprintf("%-*s  %s", width, k, scalar(fields[k]))
+		v := scalar(fields[k])
+		if k == MessageField {
+			v = msg
+		}
+		rows[i] = fmt.Sprintf("%-*s  %s", width, k, v)
 	}
 	return strings.Join(rows, "\n")
+}
+
+// messageRemainder returns the message with its embedded JSON fragment
+// replaced by "$", for the field table, when the message is text around JSON:
+// the top block shows only the fragment, so the text around it ("request
+// failed: ") would otherwise be lost. It reports false when the top block
+// already shows everything -- a plain message, one that is entirely JSON, or
+// a fragment with nothing but whitespace around it.
+func messageRemainder(fields map[string]any) (string, bool) {
+	s, ok := fields[MessageField].(string)
+	if !ok {
+		return "", false
+	}
+	if _, whole := decodeJSONString(s); whole {
+		return "", false
+	}
+	frag, ok := findJSON(s)
+	if !ok {
+		return "", false
+	}
+	if strings.TrimSpace(strings.Replace(s, frag, "", 1)) == "" {
+		return "", false
+	}
+	return strings.Replace(s, frag, "$", 1), true
 }
 
 // HasEmbedded reports whether the record contains JSON embedded in a string,

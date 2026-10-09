@@ -113,13 +113,24 @@ func TestPrettyIndentsJSONEmbeddedInAMessage(t *testing.T) {
 	if !strings.Contains(out, `"status": 502`) || !strings.Contains(out, `"code": "ETIMEDOUT"`) {
 		t.Errorf("embedded JSON not indented:\n%s", out)
 	}
-	// The plain field would just repeat the same JSON escaped, so it is
-	// dropped once its embedded section is shown.
-	if strings.Contains(out, `"message": "request failed:`) {
-		t.Errorf("the plain field duplicates the embedded section:\n%s", out)
+	// The text around the JSON must still be shown, with the JSON itself
+	// replaced by "$" since it is already indented above.
+	if !strings.Contains(out, "message    request failed: $") {
+		t.Errorf("message row must keep its text, JSON replaced by $:\n%s", out)
+	}
+	if strings.Contains(out, `request failed: {`) {
+		t.Errorf("the message row duplicates the embedded section:\n%s", out)
 	}
 	if !HasEmbedded(r) {
 		t.Error("HasEmbedded = false, want true")
+	}
+}
+
+func TestNoMessageRowWhenOnlyWhitespaceSurroundsTheJSON(t *testing.T) {
+	r := Parse(`{"level":"info","message":"  {\"a\":1} "}`, ts)
+	out := Pretty(r)
+	if strings.Contains(out, "message") {
+		t.Errorf("a message row of just $ is noise:\n%s", out)
 	}
 }
 
