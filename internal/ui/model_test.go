@@ -799,3 +799,21 @@ func TestFilterReplacedBeforeItFinishesIsDiscarded(t *testing.T) {
 		t.Errorf("filter = %+v, rows = %v; want only the later beta filter", m.filter, m.rows)
 	}
 }
+
+func TestFilterValuePromptReplacesTheList(t *testing.T) {
+	m := newTestModel(t, 80, 10, defaultCols(), filterLines()...)
+	m = key(t, m, "!")
+	for i := 0; i < 3; i++ {
+		m = key(t, m, "j")
+	}
+	m = key(t, m, "enter")
+	view := stripANSI(m.View())
+	if strings.Contains(view, "one") || strings.Contains(view, "three") {
+		t.Errorf("list rows still on screen behind the value prompt:\n%s", view)
+	}
+	for _, want := range []string{"thread = alpha", "enter to apply", "esc to cancel"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("value prompt lacks %q:\n%s", want, view)
+		}
+	}
+}

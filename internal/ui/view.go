@@ -16,6 +16,9 @@ func (m Model) View() string {
 	if m.mode == modePopup || m.mode == modeHelp || m.mode == modeMenu {
 		return m.popupView()
 	}
+	if m.mode == modeFilterValue {
+		return m.filterPromptView()
+	}
 	var b strings.Builder
 
 	if m.showHeader() {
@@ -170,9 +173,6 @@ func (m Model) statusLine() string {
 	left := m.cfg.Title
 	if m.mode == modeSearch {
 		return m.st.status.Render(pad("/"+m.input, m.w))
-	}
-	if m.mode == modeFilterValue {
-		return m.st.status.Render(pad("filter "+m.filterOn+"="+m.input, m.w))
 	}
 
 	parts := []string{left, fmt.Sprintf("%d lines", len(m.recs))}

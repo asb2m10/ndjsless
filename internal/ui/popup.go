@@ -116,3 +116,28 @@ func (m Model) popupFooter(total, h int) string {
 	}
 	return base
 }
+
+// filterPromptView replaces the list while a filter value is edited. A prompt
+// on the status line alone went unnoticed: the list stayed on screen, so the
+// keys typed into the prompt looked like a frozen pager.
+func (m Model) filterPromptView() string {
+	w, h := m.popupBox()
+	body := []string{
+		"Show only the records where",
+		"",
+		"  " + m.filterOn + " = " + m.st.cursor.Render(m.input+" "),
+		"",
+		"Type to edit the value; it starts as the selected record's.",
+	}
+	out := make([]string, 0, h+1)
+	for i := 0; i < h; i++ {
+		line := ""
+		if i < len(body) {
+			line = ansi.Truncate(body[i], w, "›")
+		}
+		out = append(out, line)
+	}
+	footer := "filter by field · enter to apply · esc to cancel"
+	out = append(out, m.st.ts.Render(ansi.Truncate(footer, w, "")))
+	return strings.Join(out, "\n")
+}
