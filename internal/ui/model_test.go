@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/asb2m10/ndjsless/internal/record"
 	tea "github.com/charmbracelet/bubbletea"
@@ -515,7 +516,9 @@ func TestClippingDoesNotChangeWhatIsDisplayed(t *testing.T) {
 	}
 	m := newTestModel(t, 30, 5, defaultCols(),
 		`{"eventTime":"2026-10-01T09:58:01.000Z","message":"`+msg+`"}`)
-	full := "05:58:01.000  " + msg // what the row would be, unclipped
+	// The timestamp renders in the local zone, so derive it rather than hardcode it.
+	ts := time.Date(2026, 10, 1, 9, 58, 1, 0, time.UTC).Local().Format("15:04:05.000")
+	full := ts + "  " + msg // what the row would be, unclipped
 	for _, off := range []int{0, 1, 7, 13, 14, 50, 200, 399, 413} {
 		m.xoff = off
 		got := strings.TrimRight(stripANSI(rows(m)[0]), " ")
