@@ -147,3 +147,7 @@ system dependencies. Before either, `go vet ./... && gofmt -l .` and
 
 Keys are read from `/dev/tty`, not stdin, which is what lets the log arrive on
 stdin. Consequently `ndjsless` needs a terminal and will say so if it has none.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

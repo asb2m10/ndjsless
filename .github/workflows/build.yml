@@ -1,0 +1,52 @@
+# Reusable: test, then cross-compile archives named ndjsless_<version>_<os>_<arch>.
+name: build
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: test -z "$(gofmt -l .)"
+      - run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: darwin, goarch: arm64}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          name=ndjsless_${{ inputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}
+          mkdir "$name"
+          go build -trimpath -ldflags "-s -w" -o "$name/ndjsless" ./cmd/ndjsless
+          cp LICENSE README.md "$name/"
+          tar -czf "$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ndjsless_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: ndjsless_*.tar.gz
