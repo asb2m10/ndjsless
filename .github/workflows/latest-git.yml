@@ -1,24 +1,27 @@
-name: nightly
+name: latest-git
 
 on:
-  schedule:
-    - cron: "0 3 * * *"
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: latest-git
+  cancel-in-progress: true
+
 jobs:
   build:
     uses: ./.github/workflows/build.yml
     with:
-      version: nightly
+      version: latest-git
 
   publish:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -26,13 +29,14 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum *.tar.gz > checksums.txt
-      - name: Replace the nightly release
+      - name: Replace the latest-git release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete nightly --cleanup-tag --yes || true
-          gh release create nightly dist/* \
+          gh release delete latest-git --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create latest-git dist/* \
+            --repo "$GITHUB_REPOSITORY" \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "Nightly ($(date -u +%F))" \
-            --notes "Automated build of \`${GITHUB_SHA::7}\`. Not a stable release."
+            --title "Latest git (${GITHUB_SHA::7})" \
+            --notes "Automated build of \`main\` at ${GITHUB_SHA::7}. Not a stable release."
