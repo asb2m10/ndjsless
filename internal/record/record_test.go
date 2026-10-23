@@ -128,3 +128,27 @@ func TestCustomTsField(t *testing.T) {
 		t.Error("custom -ts-field not honoured")
 	}
 }
+
+func TestTimeFieldIsTheTimestampFallback(t *testing.T) {
+	r := Parse(`{"time":"2026-10-01T09:58:01Z","message":"x"}`, ts)
+	if want := time.Date(2026, 10, 1, 9, 58, 1, 0, time.UTC); !r.Ts.Equal(want) {
+		t.Errorf("Ts = %v, want %v from the time field", r.Ts, want)
+	}
+	r = Parse(`{"eventTime":"2026-10-01T09:58:01Z","time":"2020-01-01T00:00:00Z"}`, ts)
+	if r.Ts.Year() != 2026 {
+		t.Errorf("Ts = %v, the configured field must win over time", r.Ts)
+	}
+}
+
+func TestMessageFallsBackToMsgThenRawLine(t *testing.T) {
+	if got := Parse(`{"msg":"hi","message":"hello"}`, ts).Column("message"); got != "hello" {
+		t.Errorf("message = %q, want message to win over msg", got)
+	}
+	if got := Parse(`{"msg":"hi"}`, ts).Column("message"); got != "hi" {
+		t.Errorf("message = %q, want msg as the fallback", got)
+	}
+	line := `{"level":"info","port":8080}`
+	if got := Parse(line, ts).Column("message"); got != line {
+		t.Errorf("message = %q, want the raw line", got)
+	}
+}

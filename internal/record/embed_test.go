@@ -197,3 +197,24 @@ func TestNestedFieldPathInSectionLabel(t *testing.T) {
 		t.Errorf("section not labelled with the dotted path:\n%s", out)
 	}
 }
+
+func TestPrettyUsesMsgAsTheMessage(t *testing.T) {
+	r := Parse(`{"msg":"request failed: {\"status\":502}","level":"error"}`, DefaultTsField)
+	got := Pretty(r)
+	if !strings.HasPrefix(got, "{\n  \"status\": 502\n}") {
+		t.Errorf("Pretty should lead with the JSON embedded in msg:\n%s", got)
+	}
+	if !strings.Contains(got, "msg    request failed: $") {
+		t.Errorf("Pretty should keep the text around the fragment in the msg row:\n%s", got)
+	}
+	if strings.Contains(got, "embedded in msg") {
+		t.Errorf("msg section should be pulled up front, not repeated:\n%s", got)
+	}
+}
+
+func TestPrettyMessageIsTheRawLineWithoutAMessageField(t *testing.T) {
+	line := `{"level":"info","port":8080}`
+	if got := PrettyMessage(Parse(line, DefaultTsField)); got != line {
+		t.Errorf("PrettyMessage = %q, want the raw line", got)
+	}
+}

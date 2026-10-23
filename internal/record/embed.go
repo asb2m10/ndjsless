@@ -35,13 +35,13 @@ func Pretty(r Record) string {
 	if r.Broken {
 		return prettyBroken(r.Raw)
 	}
-	msgBlock, rest := messageBlock(r.Fields)
+	msgBlock, rest := messageBlock(r.Fields, r.MsgKey)
 
 	var parts []string
 	if msgBlock != "" {
 		parts = append(parts, msgBlock)
 	}
-	if tbl := prettyFields(r.Fields); tbl != "" {
+	if tbl := prettyFields(r.Fields, r.MsgKey); tbl != "" {
 		parts = append(parts, tbl)
 	}
 	parts = append(parts, rest...)
@@ -56,10 +56,11 @@ func Pretty(r Record) string {
 // user copy only the message, indentation and all, rather than the whole
 // popup.
 func PrettyMessage(r Record) string {
-	if r.Broken {
+	if r.Broken || r.MsgKey == "" {
+		// The list shows the raw line as the message; copy the same.
 		return r.Raw
 	}
-	msgBlock, _ := messageBlock(r.Fields)
+	msgBlock, _ := messageBlock(r.Fields, r.MsgKey)
 	return msgBlock
 }
 
@@ -68,13 +69,14 @@ func PrettyMessage(r Record) string {
 // itself -- plus the remaining sections for every other field, with the
 // message's own section (now shown up front, header stripped since its
 // position already says what it is) pulled out of that remainder so it is
-// not rendered twice.
-func messageBlock(fields map[string]any) (block string, rest []string) {
+// not rendered twice. key is the field holding the message (Record.MsgKey);
+// when it is "" there is no message to pull out.
+func messageBlock(fields map[string]any, key string) (block string, rest []string) {
 	secs := sections(fields)
-	header := "--- embedded in " + MessageField + " ---\n"
+	header := "--- embedded in " + key + " ---\n"
 	rest = make([]string, 0, len(secs))
 	for _, s := range secs {
-		if block == "" && strings.HasPrefix(s, header) {
+		if key != "" && block == "" && strings.HasPrefix(s, header) {
 			block = strings.TrimPrefix(s, header)
 			continue
 		}
@@ -83,7 +85,7 @@ func messageBlock(fields map[string]any) (block string, rest []string) {
 	if block != "" {
 		return block, rest
 	}
-	if msg, ok := prettyMessage(fields); ok {
+	if msg, ok := prettyMessage(fields, key); ok {
 		return msg, rest
 	}
 	return "", rest
@@ -94,9 +96,9 @@ func messageBlock(fields map[string]any) (block string, rest []string) {
 // "message" key or quoting -- its position up front already says what it is,
 // and a plain string reads better unquoted. Only a value that is itself JSON
 // (expand unwraps it to a map or slice) gets the indented-structure treatment.
-func prettyMessage(fields map[string]any) (string, bool) {
-	v, ok := fields[MessageField]
-	if !ok {
+func prettyMessage(fields map[string]any, key string) (string, bool) {
+	v, ok := fields[key]
+	if key == "" || !ok {
 		return "", false
 	}
 	expanded := expand(v, 0)
@@ -117,11 +119,11 @@ func prettyMessage(fields map[string]any) (string, bool) {
 // what sections is for. The message is left out, since it is shown up front,
 // unless messageRemainder finds text around its embedded JSON that the top
 // block does not show.
-func prettyFields(fields map[string]any) string {
-	msg, hasMsg := messageRemainder(fields)
+func prettyFields(fields map[string]any, msgKey string) string {
+	msg, hasMsg := messageRemainder(fields, msgKey)
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
-		if k == MessageField && !hasMsg {
+		if msgKey != "" && k == msgKey && !hasMsg {
 			continue
 		}
 		keys = append(keys, k)
@@ -140,7 +142,7 @@ func prettyFields(fields map[string]any) string {
 	rows := make([]string, len(keys))
 	for i, k := range keys {
 		v := scalar(fields[k])
-		if k == MessageField {
+		if msgKey != "" && k == msgKey {
 			v = msg
 		}
 		rows[i] = fmt.Sprintf("%-*s  %s", width, k, v)
@@ -154,9 +156,9 @@ func prettyFields(fields map[string]any) string {
 // failed: ") would otherwise be lost. It reports false when the top block
 // already shows everything -- a plain message, one that is entirely JSON, or
 // a fragment with nothing but whitespace around it.
-func messageRemainder(fields map[string]any) (string, bool) {
-	s, ok := fields[MessageField].(string)
-	if !ok {
+func messageRemainder(fields map[string]any, key string) (string, bool) {
+	s, ok := fields[key].(string)
+	if key == "" || !ok {
 		return "", false
 	}
 	if _, whole := decodeJSONString(s); whole {

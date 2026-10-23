@@ -43,6 +43,11 @@ configured. Those are shown verbatim as the message, dimmed, rather than
 dropped. If such a line happens to contain a JSON fragment, the popup indents
 that too.
 
+**Other field names.** When a record has no `message`, its `msg` field is used
+instead, embedded JSON and all; with neither, the raw JSON line stands in as the
+message so the row is never blank. Likewise `time` is used as the timestamp when
+`eventTime` (or the `-ts-field`) is missing.
+
 **JSON logged as a string.** Loggers constantly do
 `log.error("request failed: " + JSON.stringify(err))`. The popup finds that
 fragment and indents it:
@@ -110,7 +115,7 @@ tmux that also means `set -g allow-passthrough on`.
 |---|---|
 | `-fields a,b,c` | show these columns instead of the defaults |
 | `-add a,b` | add these columns to the defaults, message stays last |
-| `-ts-field name` | the timestamp field (default `eventTime`) |
+| `-ts-field name` | the timestamp field (default `eventTime`, falling back to `time`) |
 | `-f`, `-follow` | keep reading as the file grows |
 | `-no-color` | monochrome; `NO_COLOR` works too |
 

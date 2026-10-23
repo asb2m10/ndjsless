@@ -154,7 +154,8 @@ Usage:
 
 By default only the timestamp and message fields are shown. Press enter on a line
 to see the whole record, with any JSON embedded in it indented. Lines that are not
-valid JSON are shown verbatim as the message.
+valid JSON are shown verbatim as the message. A record without "message" uses
+"msg", or else its raw JSON; one without the timestamp field falls back to "time".
 
 Flags:
 `)

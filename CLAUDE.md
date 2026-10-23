@@ -27,7 +27,9 @@ Four packages, one direction of dependency: `record` ← `ui` → (`source` feed
 
 - **`internal/record`** — `Parse(line, tsField) Record`. Pure, no I/O, no terminal concepts. A
   `Record` keeps `Raw` always; `Fields` is nil and `Broken` is true when the line is not a JSON
-  object. `embed.go` holds the popup pretty-printer.
+  object. `MsgKey` is resolved once at parse (`message`, else `msg`, else `""` = `Raw` stands in) and
+  `Column(MessageField)` and the popup both go through it; the timestamp falls back to `time`.
+  `embed.go` holds the popup pretty-printer.
 - **`internal/source`** — `Lines(ctx, r, follow) <-chan string`. A `bufio.Scanner` with a 4 MiB
   buffer; in follow mode it builds a *fresh* Scanner after EOF, because a Scanner will not resume.
 - **`internal/ui`** — the bubbletea model. `model.go` is state and `Update`, `view.go` is row

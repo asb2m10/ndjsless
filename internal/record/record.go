@@ -18,6 +18,14 @@ const DefaultTsField = "eventTime"
 // MessageField is the field rendered as the log message.
 const MessageField = "message"
 
+// FallbackMessageField is used as the message when MessageField is absent.
+// When neither is present the raw line stands in for the message, so the
+// column is never blank for a record that has something to say.
+const FallbackMessageField = "msg"
+
+// FallbackTsField is used as the timestamp when the configured field is absent.
+const FallbackTsField = "time"
+
 // Record is one parsed log line.
 type Record struct {
 	Raw    string         // the original line, verbatim
@@ -26,6 +34,7 @@ type Record struct {
 	Ts     time.Time      // zero if absent or unparseable
 	TsRaw  string         // fallback text for the timestamp column
 	Level  string         // normalised lowercase level, "" if none
+	MsgKey string         // field holding the message; "" => Raw stands in
 }
 
 // levelFields are consulted in order; the first one present wins.
@@ -66,6 +75,14 @@ func Parse(line string, tsField string) Record {
 
 	if v, ok := lookup(fields, tsField); ok {
 		r.Ts, r.TsRaw = parseTime(v)
+	} else if v, ok := lookup(fields, FallbackTsField); ok {
+		r.Ts, r.TsRaw = parseTime(v)
+	}
+	for _, name := range []string{MessageField, FallbackMessageField} {
+		if _, ok := fields[name]; ok {
+			r.MsgKey = name
+			break
+		}
 	}
 	for _, name := range levelFields {
 		if v, ok := lookup(fields, name); ok {
@@ -79,7 +96,8 @@ func Parse(line string, tsField string) Record {
 }
 
 // Column renders one field as a single line of text. The name may be a dotted
-// path ("http.status") to descend into nested objects.
+// path ("http.status") to descend into nested objects. MessageField resolves
+// through MsgKey, falling back to the raw line.
 func (r Record) Column(name string) string {
 	if r.Broken {
 		// The whole line is the message; every other column is blank.
@@ -87,6 +105,12 @@ func (r Record) Column(name string) string {
 			return r.Raw
 		}
 		return ""
+	}
+	if name == MessageField {
+		if r.MsgKey == "" {
+			return r.Raw
+		}
+		name = r.MsgKey
 	}
 	v, ok := lookup(r.Fields, name)
 	if !ok {
