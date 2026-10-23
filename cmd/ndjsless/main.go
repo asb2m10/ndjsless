@@ -110,6 +110,11 @@ func split(s string) []string {
 func openInput(args []string, follow bool) (io.Reader, string, bool, func(), error) {
 	noop := func() {}
 	if len(args) == 0 {
+		// With stdin on the terminal there is no log to read, and the stdin
+		// reader would race the UI for keystrokes on the same tty.
+		if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+			return nil, "", false, noop, fmt.Errorf("no input; give a file or pipe a log into stdin (see -h)")
+		}
 		// A pipe blocks on read until the writer closes, so following is implicit;
 		// starting pinned to the bottom is what you want from a live tail.
 		return os.Stdin, "stdin", true, noop, nil
