@@ -32,11 +32,15 @@ func run() error {
 		tsField = flag.String("ts-field", record.DefaultTsField, "field holding the event timestamp")
 		follow  = flag.Bool("follow", false, "keep reading as the file grows, like tail -f")
 		noColor = flag.Bool("no-color", false, "disable colour output")
+		maxRecs = flag.Int("max-records", 1_000_000, "keep at most this many records, dropping the oldest; 0 keeps all")
 	)
 	flag.BoolVar(follow, "f", false, "shorthand for -follow")
 	flag.Usage = usage
 	flag.Parse()
 
+	if *maxRecs < 0 {
+		return fmt.Errorf("-max-records: must be 0 or more, got %d", *maxRecs)
+	}
 	cols, err := columns(*fields, *add, *tsField)
 	if err != nil {
 		return err
@@ -62,12 +66,13 @@ func run() error {
 	defer cancel()
 
 	cfg := ui.Config{
-		Columns:   cols,
-		TsField:   *tsField,
-		Title:     title,
-		Follow:    followSrc,
-		Color:     !*noColor && ui.ColourEnabled(),
-		Clipboard: tty,
+		Columns:    cols,
+		TsField:    *tsField,
+		Title:      title,
+		Follow:     followSrc,
+		Color:      !*noColor && ui.ColourEnabled(),
+		Clipboard:  tty,
+		MaxRecords: *maxRecs,
 	}
 
 	p := tea.NewProgram(

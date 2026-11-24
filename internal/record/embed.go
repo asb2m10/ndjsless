@@ -35,13 +35,14 @@ func Pretty(r Record) string {
 	if r.Broken {
 		return prettyBroken(r.Raw)
 	}
-	msgBlock, rest := messageBlock(r.Fields, r.MsgKey)
+	fields := r.Fields()
+	msgBlock, rest := messageBlock(fields, r.MsgKey)
 
 	var parts []string
 	if msgBlock != "" {
 		parts = append(parts, msgBlock)
 	}
-	if tbl := prettyFields(r.Fields, r.MsgKey); tbl != "" {
+	if tbl := prettyFields(fields, r.MsgKey); tbl != "" {
 		parts = append(parts, tbl)
 	}
 	parts = append(parts, rest...)
@@ -60,7 +61,7 @@ func PrettyMessage(r Record) string {
 		// The list shows the raw line as the message; copy the same.
 		return r.Raw
 	}
-	msgBlock, _ := messageBlock(r.Fields, r.MsgKey)
+	msgBlock, _ := messageBlock(r.Fields(), r.MsgKey)
 	return msgBlock
 }
 
@@ -181,7 +182,8 @@ func HasEmbedded(r Record) bool {
 		_, ok := findJSON(r.Raw)
 		return ok
 	}
-	return embedded(r.Fields, 0) || len(sections(r.Fields)) > 0
+	fields := r.Fields()
+	return embedded(fields, 0) || len(sections(fields)) > 0
 }
 
 // sections renders one indented block per string field that contains a JSON

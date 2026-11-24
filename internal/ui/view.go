@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/asb2m10/ndjsless/internal/record"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -59,11 +58,11 @@ func (m Model) headerText() string {
 // window, then styles it. Styling comes last on purpose: escape sequences would
 // otherwise corrupt the cell arithmetic of the slice.
 func (m Model) renderRow(pos int) string {
-	r := m.recs[m.rows[pos]]
-	visible := m.slice(m.rowText(r))
+	e := m.at(m.rows[pos])
+	visible := m.slice(m.rowText(e))
 
-	base := m.st.forLevel(r.Level)
-	if r.Broken {
+	base := m.st.forLevel(e.rec.Level)
+	if e.rec.Broken {
 		base = m.st.broken
 	}
 	if pos == m.cursor {
@@ -81,16 +80,11 @@ func (m Model) renderRow(pos int) string {
 // megabyte of payload, and building or measuring all of it for every frame costs
 // more than redrawing the entire screen. Only the cells that can actually appear
 // are ever touched.
-func (m Model) rowText(r record.Record) string {
+func (m Model) rowText(e *entry) string {
 	budget := m.xoff + m.w + 8
 	cells := make([]string, 0, len(m.cols))
 	for i, c := range m.cols {
-		var v string
-		if c.isTs {
-			v = r.Timestamp()
-		} else {
-			v = r.Column(c.name)
-		}
+		v := e.cell(m.cols, i)
 		if i == len(m.cols)-1 && c.width == 0 {
 			// The last column is unbounded, so clip it before any O(n) work.
 			cells = append(cells, sanitise(clipRunes(v, budget)))
@@ -120,15 +114,16 @@ func clipRunes(s string, n int) string {
 // tailWidth is the display width of a record's last column, which is the only
 // part of a row whose length is unbounded. It is measured once per record so
 // that maxXOff does not have to rescan megabyte payloads on every keypress.
-func (m Model) tailWidth(r record.Record) int {
-	last := m.cols[len(m.cols)-1]
-	var v string
-	if last.isTs {
-		v = r.Timestamp()
-	} else {
-		v = r.Column(last.name)
+func (m Model) tailWidth(e entry) int {
+	return ansi.StringWidth(sanitise(e.cell(m.cols, len(m.cols)-1)))
+}
+
+// cell is the text of column i of the record.
+func (e *entry) cell(cols []column, i int) string {
+	if cols[i].isTs {
+		return e.rec.Timestamp()
 	}
-	return ansi.StringWidth(sanitise(v))
+	return e.cells[i]
 }
 
 // prefixWidth is the width of every column before the last one, gaps included.
@@ -175,7 +170,11 @@ func (m Model) statusLine() string {
 		return m.st.status.Render(pad("/"+m.input, m.w))
 	}
 
-	parts := []string{left, fmt.Sprintf("%d lines", len(m.recs))}
+	count := fmt.Sprintf("%d lines", len(m.recs))
+	if m.base > 0 {
+		count += fmt.Sprintf(" (%d oldest dropped)", m.base)
+	}
+	parts := []string{left, count}
 	switch {
 	case m.filtering && m.filter == nil:
 		parts = []string{left, fmt.Sprintf("clearing filter over %d lines…", len(m.recs))}
@@ -183,7 +182,7 @@ func (m Model) statusLine() string {
 		parts = []string{left, fmt.Sprintf("filtering %d lines…", len(m.recs)),
 			fmt.Sprintf("%s=%s", m.filter.field, truncate(m.filter.value, 40))}
 	case m.filter != nil:
-		parts = []string{left, fmt.Sprintf("%d of %d lines", len(m.rows), len(m.recs)),
+		parts = []string{left, fmt.Sprintf("%d of %s", len(m.rows), count),
 			fmt.Sprintf("%s=%s", m.filter.field, truncate(m.filter.value, 40))}
 	}
 	if m.follow {
@@ -204,7 +203,7 @@ func (m Model) statusLine() string {
 	if m.xoff > 0 {
 		parts = append(parts, fmt.Sprintf("+%d", m.xoff))
 	}
-	if m.cursor < len(m.rows) && m.hasJSON[m.rows[m.cursor]] {
+	if m.cursor < len(m.rows) && m.at(m.rows[m.cursor]).hasJSON {
 		parts = append(parts, "⏎ json")
 	}
 	bar := strings.Join(parts, " · ")

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -27,9 +28,14 @@ const FallbackMessageField = "msg"
 const FallbackTsField = "time"
 
 // Record is one parsed log line.
+//
+// The decoded fields cost several times the line itself, so a pager holding a
+// whole log keeps records Compact: just Raw plus what was extracted at parse.
+// Everything that needs the fields still works on a compact record, by
+// decoding Raw again on each call; use Decoded first when making several.
 type Record struct {
 	Raw    string         // the original line, verbatim
-	Fields map[string]any // nil when the line is not valid JSON
+	fields map[string]any // nil when compact, or when the line is not valid JSON
 	Broken bool           // true => render Raw as the message
 	Ts     time.Time      // zero if absent or unparseable
 	TsRaw  string         // fallback text for the timestamp column
@@ -56,28 +62,21 @@ func Parse(line string, tsField string) Record {
 		tsField = DefaultTsField
 	}
 
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "{") {
-		// Cheap rejection: a log record is an object. Arrays and bare scalars
-		// are not records even though they are valid JSON.
+	fields, ok := decode(line)
+	if !ok {
 		r.Broken = true
 		return r
 	}
-
-	dec := json.NewDecoder(strings.NewReader(trimmed))
-	dec.UseNumber() // keep epoch millis and large ids exact
-	var fields map[string]any
-	if err := dec.Decode(&fields); err != nil || fields == nil {
-		r.Broken = true
-		return r
-	}
-	r.Fields = fields
+	r.fields = fields
 
 	if v, ok := lookup(fields, tsField); ok {
 		r.Ts, r.TsRaw = parseTime(v)
 	} else if v, ok := lookup(fields, FallbackTsField); ok {
 		r.Ts, r.TsRaw = parseTime(v)
+	} else if v, ok := detectTime(fields); ok {
+		r.Ts, r.TsRaw = parseTime(v)
 	}
+	r.TsRaw = share(line, r.TsRaw)
 	for _, name := range []string{MessageField, FallbackMessageField} {
 		if _, ok := fields[name]; ok {
 			r.MsgKey = name
@@ -93,6 +92,103 @@ func Parse(line string, tsField string) Record {
 		}
 	}
 	return r
+}
+
+// detectTsFields are checked first when auto-detecting the timestamp.
+var detectTsFields = []string{"timestamp", "@timestamp", "ts", "datetime", "date"}
+
+// detectTime finds an ISO-8601 timestamp when neither the configured nor the
+// fallback field exists: a top-level string with 'T' at offset 10 that actually
+// parses. Well-known names win; otherwise keys are scanned in sorted order so
+// the choice is stable.
+func detectTime(fields map[string]any) (string, bool) {
+	for _, name := range detectTsFields {
+		if s, ok := fields[name].(string); ok && isoTime(s) {
+			return s, true
+		}
+	}
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if s, ok := fields[k].(string); ok && isoTime(s) {
+			return s, true
+		}
+	}
+	return "", false
+}
+
+// isoTime reports whether s looks like YYYY-MM-DDTHH:MM:SS... and parses.
+func isoTime(s string) bool {
+	if len(s) < 19 || s[10] != 'T' {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		_, err = time.Parse("2006-01-02T15:04:05.999999999", s)
+	}
+	return err == nil
+}
+
+// decode turns a line into its top-level fields, reporting false when the line
+// is not a JSON object.
+func decode(line string) (map[string]any, bool) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "{") {
+		// Cheap rejection: a log record is an object. Arrays and bare scalars
+		// are not records even though they are valid JSON.
+		return nil, false
+	}
+	dec := json.NewDecoder(strings.NewReader(trimmed))
+	dec.UseNumber() // keep epoch millis and large ids exact
+	var fields map[string]any
+	if err := dec.Decode(&fields); err != nil || fields == nil {
+		return nil, false
+	}
+	return fields, true
+}
+
+// Compact drops the decoded fields, leaving Raw and what Parse extracted.
+func (r Record) Compact() Record {
+	r.fields = nil
+	return r
+}
+
+// Decoded returns r with its fields decoded, so that several lookups on a
+// compact record pay for one decode rather than one each.
+func (r Record) Decoded() Record {
+	r.fields = r.Fields()
+	return r
+}
+
+// Fields returns the top-level fields, decoding Raw if r is compact. It is nil
+// for a Broken record. The map must not be modified.
+func (r Record) Fields() map[string]any {
+	if r.fields != nil || r.Broken {
+		return r.fields
+	}
+	fields, _ := decode(r.Raw)
+	return fields
+}
+
+// Cell is Column for a caller that keeps the value: when the value appears
+// verbatim in Raw, as it does unless JSON escaping changed it, the result
+// shares Raw's memory instead of holding a second copy.
+func (r Record) Cell(name string) string {
+	return share(r.Raw, r.Column(name))
+}
+
+// share returns s as a substring of raw when raw contains it, else s.
+func share(raw, s string) string {
+	if s == "" {
+		return s
+	}
+	if i := strings.Index(raw, s); i >= 0 {
+		return raw[i : i+len(s)]
+	}
+	return s
 }
 
 // Column renders one field as a single line of text. The name may be a dotted
@@ -112,7 +208,7 @@ func (r Record) Column(name string) string {
 		}
 		name = r.MsgKey
 	}
-	v, ok := lookup(r.Fields, name)
+	v, ok := lookup(r.Fields(), name)
 	if !ok {
 		return ""
 	}
@@ -122,14 +218,15 @@ func (r Record) Column(name string) string {
 // Has reports whether the field is present, even if its value is null. The name
 // may be a dotted path, as for Column.
 func (r Record) Has(name string) bool {
-	_, ok := lookup(r.Fields, name)
+	_, ok := lookup(r.Fields(), name)
 	return ok
 }
 
 // Keys lists the top-level field names of the record, in no particular order.
 func (r Record) Keys() []string {
-	keys := make([]string, 0, len(r.Fields))
-	for k := range r.Fields {
+	fields := r.Fields()
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
 		keys = append(keys, k)
 	}
 	return keys

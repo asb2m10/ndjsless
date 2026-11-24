@@ -26,8 +26,11 @@ Four packages, one direction of dependency: `record` ← `ui` → (`source` feed
 `cmd/ndjsless`.
 
 - **`internal/record`** — `Parse(line, tsField) Record`. Pure, no I/O, no terminal concepts. A
-  `Record` keeps `Raw` always; `Fields` is nil and `Broken` is true when the line is not a JSON
-  object. `MsgKey` is resolved once at parse (`message`, else `msg`, else `""` = `Raw` stands in) and
+  `Record` keeps `Raw` always; `Fields()` is nil and `Broken` is true when the line is not a JSON
+  object. `Compact()` drops the decoded map (it costs ~6× the line); `Fields()`, `Column`, `Has`,
+  `Pretty` re-decode `Raw` on a compact record, so call `Decoded()` before several lookups. `Cell`
+  is `Column` returning a substring of `Raw` where possible, for values that are kept. `MsgKey` is
+  resolved once at parse (`message`, else `msg`, else `""` = `Raw` stands in) and
   `Column(MessageField)` and the popup both go through it; the timestamp falls back to `time`.
   `embed.go` holds the popup pretty-printer.
 - **`internal/source`** — `Lines(ctx, r, follow) <-chan string`. A `bufio.Scanner` with a 4 MiB
@@ -38,6 +41,17 @@ Four packages, one direction of dependency: `record` ← `ui` → (`source` feed
 
 ### Invariants that are easy to break
 
+**Stored records are compact; the list view never decodes.** `Model.recs` holds `entry` values: the
+compact `Record` plus `cells` (each column's text, via `Record.Cell`), `tailW` and `hasJSON`, all
+computed once in `append`. Rendering, search and `growColumns` read only those. Only the popup,
+copying and the `!` filter (off the UI goroutine) decode `Raw` again.
+
+**Rows hold record ids, not slice indices.** `Config.MaxRecords` (`-max-records`) makes `trim` drop
+the oldest records; `recs[0]` has id `base`, and `Model.at(id)` looks one up. `forget` removes the
+rows of dropped records and shifts `cursor`, `top` and `matches` with them. `trim` copies survivors
+to a fresh array instead of reslicing or clearing, because a running filter may still read the old
+one.
+
 **Keys come from `/dev/tty`, never stdin.** In the primary use case stdin carries the log. `main.go`
 opens `/dev/tty` and passes it as both `tea.WithInput` and `tea.WithOutput`. Anything that reads
 `os.Stdin` for interaction breaks `tail -f app.log | ndjsless`. The input is opened *before* the tty
@@ -45,10 +59,10 @@ so a bad flag or unreadable file reports its real error instead of "not a termin
 
 **Rendering never touches more of a record than can appear on screen.** A single record can carry a
 megabyte. `Model.rowText` clips each column to `xoff + w + 8` cells *before* any O(n) work
-(`clipRunes`, then `sanitise`), and `maxXOff` reads `Model.tailW` — the last column's display width,
+(`clipRunes`, then `sanitise`), and `maxXOff` reads `entry.tailW` — the last column's display width,
 measured once per record at ingest — rather than re-rendering rows. Building or measuring whole
 records in the render path cost 127 ms/frame before this; `BenchmarkViewHugeLines` must stay level
-with `BenchmarkViewNormalLines`. `Model.hasJSON` is cached at ingest for the same reason.
+with `BenchmarkViewNormalLines`. `entry.hasJSON` is cached at ingest for the same reason.
 `TestClippingDoesNotChangeWhatIsDisplayed` pins the clipped output against a slow reference.
 
 **Style is applied after the horizontal slice, never before.** `ansi.Cut`/`StringWidth` count display
@@ -72,8 +86,8 @@ why they work.
 
 **Filtering runs off the UI goroutine.** `applyFilter` blanks `rows` and returns a `tea.Cmd` that
 scans a snapshot of `recs`; `finishFilter` installs the result (dropped if `filterGen` moved on) and
-admits records that arrived meanwhile. This is only safe because `recs` is append-only and a parsed
-`Record` is never mutated — keep it that way.
+admits records that arrived meanwhile. This is only safe because `recs` is only ever appended to or
+replaced wholesale by `trim`, and a stored `entry` is never mutated — keep it that way.
 
 ### Embedded JSON: two shapes, deliberately rendered differently
 

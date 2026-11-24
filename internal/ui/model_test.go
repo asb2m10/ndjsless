@@ -820,3 +820,74 @@ func TestFilterValuePromptReplacesTheList(t *testing.T) {
 		}
 	}
 }
+
+// numbered returns n records whose messages are "m0", "m1", ...
+func numbered(from, n int) []string {
+	lines := make([]string, n)
+	for i := range lines {
+		lines[i] = fmt.Sprintf(`{"eventTime":"2026-10-01T09:58:01.000Z","message":"m%d"}`, from+i)
+	}
+	return lines
+}
+
+func cappedModel(t *testing.T, limit int, lines ...string) Model {
+	t.Helper()
+	m := New(Config{Columns: defaultCols(), TsField: record.DefaultTsField, Title: "test", MaxRecords: limit}, make(chan string))
+	m.w, m.h = 80, 10
+	m.append(lines)
+	return m
+}
+
+func TestMaxRecordsDropsTheOldest(t *testing.T) {
+	m := cappedModel(t, 16, numbered(0, 40)...)
+	if len(m.recs) > 16 {
+		t.Fatalf("kept %d records, limit is 16", len(m.recs))
+	}
+	if got := m.at(m.rows[0]).rec.Column("message"); got != fmt.Sprintf("m%d", m.base) {
+		t.Errorf("first row is %q, want m%d", got, m.base)
+	}
+	if got := m.at(m.rows[len(m.rows)-1]).rec.Column("message"); got != "m39" {
+		t.Errorf("last row is %q, want the newest record m39", got)
+	}
+	if !strings.Contains(stripANSI(m.statusLine()), fmt.Sprintf("(%d oldest dropped)", m.base)) {
+		t.Errorf("status %q does not say records were dropped", stripANSI(m.statusLine()))
+	}
+}
+
+func TestMaxRecordsKeepsTheCursorOnItsRecord(t *testing.T) {
+	m := cappedModel(t, 16, numbered(0, 16)...)
+	m.follow = false
+	m.cursor = 10 // m10
+	m.append(numbered(16, 4))
+	if r, _ := m.selected(); r.Column("message") != "m10" {
+		t.Errorf("selected %q after trimming, want m10", r.Column("message"))
+	}
+}
+
+func TestMaxRecordsKeepsSearchMatchesAligned(t *testing.T) {
+	m := cappedModel(t, 16, numbered(0, 16)...)
+	m.setSearch("m1") // m1, m10..m15
+	m.append(numbered(16, 4))
+	for _, pos := range m.matches {
+		if got := m.at(m.rows[pos]).rec.Column("message"); !strings.Contains(got, "m1") {
+			t.Errorf("match at row %d is %q", pos, got)
+		}
+	}
+	if len(m.matches) == 0 {
+		t.Error("every match was lost")
+	}
+}
+
+func TestFilterSurvivesRecordsDroppedWhileItRuns(t *testing.T) {
+	m := cappedModel(t, 16, numbered(0, 16)...)
+	cmd := m.applyFilter(nil) // clearing a filter rebuilds the rows the same way
+	m.append(numbered(16, 8))
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	if len(m.rows) != len(m.recs) {
+		t.Fatalf("rows = %d, want every retained record (%d)", len(m.rows), len(m.recs))
+	}
+	if m.rows[0] != m.base || m.rows[len(m.rows)-1] != m.end()-1 {
+		t.Errorf("rows span ids %d..%d, want %d..%d", m.rows[0], m.rows[len(m.rows)-1], m.base, m.end()-1)
+	}
+}

@@ -21,6 +21,10 @@ type Config struct {
 	Follow    bool     // start pinned to the bottom
 	Color     bool
 	Clipboard io.Writer // where OSC52 copy sequences are written; nil disables c/m
+
+	// MaxRecords bounds how many records are kept; past it the oldest are
+	// dropped. 0 keeps everything.
+	MaxRecords int
 }
 
 type mode int
@@ -52,6 +56,17 @@ type column struct {
 	isTs  bool
 }
 
+// entry is a retained record plus everything the list view reads from it,
+// extracted at ingest. The record itself is kept compact (see record.Compact),
+// so rendering, searching and scrolling must go through the cached values here:
+// anything else re-decodes the line.
+type entry struct {
+	rec     record.Record
+	cells   []string // each column's text; "" for the timestamp, rendered from rec.Ts
+	tailW   int      // display width of the last column; see tailWidth
+	hasJSON bool     // whether the popup would reveal indented JSON
+}
+
 // fieldFilter keeps only the records whose field renders as value.
 type fieldFilter struct {
 	field string
@@ -65,11 +80,13 @@ type Model struct {
 	cols  []column
 	lines <-chan string
 
-	recs    []record.Record // every record ingested, filtered or not
-	tailW   []int           // display width of each record's last column; see tailWidth
-	hasJSON []bool          // whether the popup would reveal indented JSON
+	// recs are the retained records, filtered or not, oldest first. Every record
+	// ingested gets an id, counting from 0; recs[0] has id base, so base is also
+	// how many records MaxRecords has dropped. Use at to look one up.
+	recs []entry
+	base int
 
-	// rows are the indices into recs that are shown, in order. Without a filter
+	// rows are the ids of the records that are shown, in order. Without a filter
 	// it is every record. top, cursor and matches are positions in rows.
 	rows   []int
 	filter *fieldFilter
@@ -199,47 +216,106 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) append(lines []string) {
 	for _, line := range lines {
 		r := record.Parse(line, m.cfg.TsField)
-		m.recs = append(m.recs, r)
-		m.tailW = append(m.tailW, m.tailWidth(r))
+		e := entry{rec: r.Compact(), cells: m.cellsOf(r)}
+		e.tailW = m.tailWidth(e)
 		// Computed on ingest, not on render: finding embedded JSON means scanning
 		// the record, and the status bar must not pay that on every frame.
-		m.hasJSON = append(m.hasJSON, record.HasEmbedded(r))
-		m.growColumns(r)
+		e.hasJSON = record.HasEmbedded(r)
+		m.growColumns(e)
 		for _, k := range r.Keys() {
 			m.fields[k] = true
 		}
+		m.recs = append(m.recs, e)
 		if !m.filtering {
-			m.admit(len(m.recs) - 1) // otherwise finishFilter catches it up
+			m.admit(m.end() - 1) // otherwise finishFilter catches it up
 		}
 	}
+	m.trim()
 	if m.follow {
 		m.toBottom()
 	}
 	m.clampVertical()
 }
 
-// admit shows recs[i] if it passes the active filter. Records must be admitted
-// in order, since rows and matches are kept ascending.
-func (m *Model) admit(i int) {
-	r := m.recs[i]
-	if !m.inFilter(r) {
+// cellsOf extracts the text of every column but the timestamp. The values share
+// the line's memory where they can, so keeping them costs little beyond Raw.
+func (m Model) cellsOf(r record.Record) []string {
+	cells := make([]string, len(m.cols))
+	for i, c := range m.cols {
+		if !c.isTs {
+			cells[i] = r.Cell(c.name)
+		}
+	}
+	return cells
+}
+
+// at returns the record with the given id, which must still be retained.
+func (m Model) at(id int) *entry {
+	return &m.recs[id-m.base]
+}
+
+// end is one past the id of the newest record.
+func (m Model) end() int {
+	return m.base + len(m.recs)
+}
+
+// admit shows record id if it passes the active filter. Records must be
+// admitted in order, since rows and matches are kept ascending.
+func (m *Model) admit(id int) {
+	e := m.at(id)
+	if !m.inFilter(e.rec) {
 		return
 	}
-	m.rows = append(m.rows, i)
-	if m.search != "" && matchesRecord(r, m.cols, m.cfg.TsField, m.search) {
+	m.rows = append(m.rows, id)
+	if m.search != "" && matchesRecord(e, m.cols, m.search) {
 		m.matches = append(m.matches, len(m.rows)-1)
 	}
 }
 
+// trim enforces MaxRecords by dropping the oldest records.
+//
+// The survivors are copied to a fresh array rather than resliced: a running
+// filter may still be reading the old one, so its dropped slots cannot be
+// cleared, and a reslice would keep them reachable. To amortise that copy, an
+// extra eighth of the limit is dropped at a time.
+func (m *Model) trim() {
+	limit := m.cfg.MaxRecords
+	if limit <= 0 || len(m.recs) <= limit {
+		return
+	}
+	drop := len(m.recs) - limit + limit/8
+	m.recs = slices.Clone(m.recs[drop:])
+	m.base += drop
+	m.forget()
+}
+
+// forget removes the rows of dropped records. Positions shift down with them,
+// so the cursor stays on the same record unless that record was dropped too.
+func (m *Model) forget() {
+	cut := sort.SearchInts(m.rows, m.base)
+	if cut == 0 {
+		return
+	}
+	m.rows = m.rows[cut:]
+	k := sort.SearchInts(m.matches, cut)
+	matches := make([]int, 0, len(m.matches)-k)
+	for _, pos := range m.matches[k:] {
+		matches = append(matches, pos-cut)
+	}
+	m.matches = matches
+	m.cursor = max(0, m.cursor-cut)
+	m.top = max(0, m.top-cut)
+}
+
 // growColumns widens columns to fit new values. Widths only ever grow: shrinking
 // them would make the whole view jitter sideways as records stream in.
-func (m *Model) growColumns(r record.Record) {
+func (m *Model) growColumns(e entry) {
 	for i := range m.cols {
 		c := &m.cols[i]
 		if c.isTs || c.width == 0 {
 			continue
 		}
-		if n := len(r.Column(c.name)); n > c.width {
+		if n := len(e.cells[i]); n > c.width {
 			c.width = min(n, colClamp)
 		}
 	}
@@ -402,6 +478,7 @@ func (m *Model) choose(i int) tea.Cmd {
 		m.status = "no record selected"
 		return nil
 	}
+	r = r.Decoded()
 	if !r.Has(field) {
 		m.status = fmt.Sprintf("this record has no %q field", field)
 		return nil
@@ -412,7 +489,8 @@ func (m *Model) choose(i int) tea.Cmd {
 	return nil
 }
 
-// filteredMsg carries the rows a filter selected out of recs[:n].
+// filteredMsg carries the rows a filter selected out of the records with ids
+// below n.
 type filteredMsg struct {
 	gen     int
 	n       int
@@ -427,7 +505,8 @@ type filteredMsg struct {
 // empty, which blanks the screen and shows that the filter is being applied.
 //
 // The command reads a snapshot of recs: append only ever writes past its end,
-// and a Record is never mutated once parsed.
+// trim replaces the array rather than changing it, and an entry is never
+// mutated once stored.
 func (m *Model) applyFilter(f *fieldFilter) tea.Cmd {
 	if !m.filtering && len(m.rows) > 0 {
 		m.anchor = m.rows[m.cursor]
@@ -438,16 +517,17 @@ func (m *Model) applyFilter(f *fieldFilter) tea.Cmd {
 	m.rows, m.matches = nil, nil
 	m.top, m.cursor = 0, 0
 
-	gen, recs, search := m.filterGen, m.recs, m.search
-	cols, tsField := slices.Clone(m.cols), m.cfg.TsField
+	gen, recs, base, search := m.filterGen, m.recs, m.base, m.search
+	cols := slices.Clone(m.cols)
 	return func() tea.Msg {
-		out := filteredMsg{gen: gen, n: len(recs), search: search, rows: make([]int, 0, len(recs))}
-		for i, r := range recs {
-			if !passes(f, r) {
+		out := filteredMsg{gen: gen, n: base + len(recs), search: search, rows: make([]int, 0, len(recs))}
+		for i := range recs {
+			e := &recs[i]
+			if !passes(f, e.rec) {
 				continue
 			}
-			out.rows = append(out.rows, i)
-			if search != "" && matchesRecord(r, cols, tsField, search) {
+			out.rows = append(out.rows, base+i)
+			if search != "" && matchesRecord(e, cols, search) {
 				out.matches = append(out.matches, len(out.rows)-1)
 			}
 		}
@@ -461,14 +541,15 @@ func (m *Model) applyFilter(f *fieldFilter) tea.Cmd {
 func (m *Model) finishFilter(msg filteredMsg) {
 	m.filtering = false
 	m.rows, m.matches = msg.rows, msg.matches
+	m.forget()                  // drop the rows of records trimmed while it ran
 	if m.search != msg.search { // the search changed while filtering
 		m.matches = nil
 		if m.search != "" {
 			m.matches = m.matchingRows(m.search)
 		}
 	}
-	for i := msg.n; i < len(m.recs); i++ {
-		m.admit(i)
+	for id := max(msg.n, m.base); id < m.end(); id++ {
+		m.admit(id)
 	}
 	m.cursor = sort.SearchInts(m.rows, m.anchor)
 	m.cursor = clamp(m.cursor, 0, max(0, len(m.rows)-1))
@@ -488,6 +569,7 @@ func passes(f *fieldFilter, r record.Record) bool {
 	if f == nil {
 		return true
 	}
+	r = r.Decoded()
 	return r.Has(f.field) && r.Column(f.field) == f.value
 }
 
@@ -650,7 +732,7 @@ func (m Model) selected() (record.Record, bool) {
 	if len(m.rows) == 0 {
 		return record.Record{}, false
 	}
-	return m.recs[m.rows[m.cursor]], true
+	return m.at(m.rows[m.cursor]).rec, true
 }
 
 // viewHeight is the number of record rows on screen: everything but the status
@@ -676,7 +758,7 @@ func (m Model) showHeader() bool {
 func (m Model) maxXOff() int {
 	widest := 0
 	for i := m.top; i < len(m.rows) && i < m.top+m.viewHeight(); i++ {
-		if n := m.tailW[m.rows[i]]; n > widest {
+		if n := m.at(m.rows[i]).tailW; n > widest {
 			widest = n
 		}
 	}
@@ -709,7 +791,7 @@ func (m *Model) setSearch(pattern string) {
 func (m Model) matchingRows(pattern string) []int {
 	var out []int
 	for pos, idx := range m.rows {
-		if matchesRecord(m.recs[idx], m.cols, m.cfg.TsField, pattern) {
+		if matchesRecord(m.at(idx), m.cols, pattern) {
 			out = append(out, pos)
 		}
 	}
@@ -767,16 +849,10 @@ func (m *Model) openPopup() {
 
 // matchesRecord reports a case-insensitive substring hit on any rendered column,
 // so searching matches what the eye sees rather than the raw JSON.
-func matchesRecord(r record.Record, cols []column, tsField, pattern string) bool {
+func matchesRecord(e *entry, cols []column, pattern string) bool {
 	needle := strings.ToLower(pattern)
-	for _, c := range cols {
-		var v string
-		if c.isTs {
-			v = r.Timestamp()
-		} else {
-			v = r.Column(c.name)
-		}
-		if strings.Contains(strings.ToLower(v), needle) {
+	for i := range cols {
+		if strings.Contains(strings.ToLower(e.cell(cols, i)), needle) {
 			return true
 		}
 	}

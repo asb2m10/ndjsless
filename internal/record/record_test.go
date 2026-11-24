@@ -3,6 +3,7 @@ package record
 import (
 	"testing"
 	"time"
+	"unsafe"
 )
 
 const ts = DefaultTsField
@@ -150,5 +151,68 @@ func TestMessageFallsBackToMsgThenRawLine(t *testing.T) {
 	line := `{"level":"info","port":8080}`
 	if got := Parse(line, ts).Column("message"); got != line {
 		t.Errorf("message = %q, want the raw line", got)
+	}
+}
+
+func TestCompactRecordAnswersLikeTheParsedOne(t *testing.T) {
+	line := `{"eventTime":"2026-10-01T09:58:01.120Z","message":"failed: {\"code\":1}","http":{"status":502}}`
+	full := Parse(line, ts)
+	c := full.Compact()
+	if c.Fields() == nil {
+		t.Fatal("a compact record lost its fields")
+	}
+	for _, name := range []string{"message", "http.status", "missing"} {
+		if got, want := c.Column(name), full.Column(name); got != want {
+			t.Errorf("Column(%q) = %q compact, %q parsed", name, got, want)
+		}
+		if got, want := c.Has(name), full.Has(name); got != want {
+			t.Errorf("Has(%q) = %v compact, %v parsed", name, got, want)
+		}
+	}
+	if Pretty(c) != Pretty(full) || HasEmbedded(c) != HasEmbedded(full) {
+		t.Error("the popup differs between a compact and a parsed record")
+	}
+}
+
+func TestCompactBrokenRecordStaysBroken(t *testing.T) {
+	c := Parse("plain text", ts).Compact()
+	if c.Fields() != nil || c.Column("message") != "plain text" {
+		t.Errorf("broken compact record: fields %v, message %q", c.Fields(), c.Column("message"))
+	}
+}
+
+func TestCellSharesTheLineWhenUnescaped(t *testing.T) {
+	line := `{"message":"hello world","note":"a\nb"}`
+	r := Parse(line, ts)
+	if got := r.Cell("message"); got != "hello world" || !within(line, got) {
+		t.Errorf("Cell(message) = %q, want a substring of the line", got)
+	}
+	// An escaped value cannot be a substring; it must still come back decoded.
+	if got := r.Cell("note"); got != "a\nb" {
+		t.Errorf("Cell(note) = %q, want the decoded value", got)
+	}
+}
+
+// within reports whether sub points into s's memory.
+func within(s, sub string) bool {
+	if len(sub) == 0 {
+		return false
+	}
+	start := uintptr(unsafe.Pointer(unsafe.StringData(s)))
+	p := uintptr(unsafe.Pointer(unsafe.StringData(sub)))
+	return p >= start && p+uintptr(len(sub)) <= start+uintptr(len(s))
+}
+
+func TestDetectsISOTimestampInUnknownField(t *testing.T) {
+	r := Parse(`{"message":"x","logged_at":"2026-11-06T19:05:00.848833+00:00"}`, "")
+	if r.Ts.IsZero() || r.Ts.UTC().Format("15:04:05.000") != "19:05:00.848" {
+		t.Fatalf("not detected: %v", r.Ts)
+	}
+	r = Parse(`{"timestamp":"2026-11-06T19:05:00.848833+00:00","other":"2026-01-01T00:00:00Z"}`, "")
+	if r.Ts.Year() != 2026 || r.Ts.Month() != 11 {
+		t.Fatalf("well-known name should win: %v", r.Ts)
+	}
+	if r := Parse(`{"message":"2026-11-06 is not a time T"}`, ""); !r.Ts.IsZero() {
+		t.Fatal("false positive")
 	}
 }

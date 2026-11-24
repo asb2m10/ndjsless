@@ -81,6 +81,10 @@ the view holds still while the log keeps growing; <kbd>G</kbd> resumes.
 **Big records.** Only the cells that can appear on screen are ever rendered, so
 a megabyte-long record pages as fast as a short one.
 
+**Long-running tails.** Records are held in memory at roughly the size of the
+line itself, and at most `-max-records` of them (a million by default) are
+kept: past that the oldest are dropped, and the status bar says how many.
+
 ## Keys
 
 | Key | |
@@ -118,6 +122,7 @@ tmux that also means `set -g allow-passthrough on`.
 | `-ts-field name` | the timestamp field (default `eventTime`, falling back to `time`) |
 | `-f`, `-follow` | keep reading as the file grows |
 | `-no-color` | monochrome; `NO_COLOR` works too |
+| `-max-records n` | keep at most n records, dropping the oldest (default 1000000; 0 keeps all) |
 
 Field names may be dotted paths: `-add http.status`. Timestamps are parsed from
 RFC 3339, a few common layouts, or epoch seconds/milliseconds (a number or a
